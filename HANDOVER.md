@@ -22,9 +22,23 @@ generic SSH client** — not tied to any other product’s types or workflows.
 
 ## Current state
 
-- Local: `projects/ssh-client`
-- `v0.0.0` scaffold (metadata stub only)
-- **No** working SSH session implementation yet
+- Local: `projects/ssh-client`, branch `feature/ssh-client-implementation`
+- SSH client **implemented** (C1–C7) with unit tests, Docker E2E, and docs;
+  reviewed locally, still `v0.0.0` pending release
+- No live-router smoke run yet (requires explicit user approval)
+
+## Implementation complete (v0.1.0 candidate)
+
+- **Exists now:** `SshClient` (`connect` / `exec` / `disconnect` / `connected`),
+  `SshClientError` (`connect | auth | timeout | closed | invalid`), host-key
+  pinning + `fingerprintSha256`, interactive shell I/O with `--- MORE ---`
+  pager, serialized exec with auto-reconnect and `maxOutputBytes` cap
+  (default 8 MiB), README + `docs/usage.md`, `SSH_*` `.env.example`,
+  opt-in `tools/live-smoke.mjs`, Docker Ubuntu E2E (`docker/`, `tools/e2e.sh`).
+- **Test gates:** `npm run ci` (lint + unit tests + build) and
+  `npm run test:e2e` (requires Docker).
+- **NOT done:** release branch / tag, version bump to `0.1.0`, npm publish,
+  live-router smoke.
 
 ## Plan summary
 

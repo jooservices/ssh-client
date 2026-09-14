@@ -1,6 +1,9 @@
 # ssh-client — Implementation backlog
 
-**Status:** Scaffold. Client-only SSH library.  
+**Status:** C1–C7 implemented and reviewed locally on
+`feature/ssh-client-implementation` (v0.1.0 candidate; release not done).
+Client-only SSH library.
+
 **Gate when coding:** `npm run ci` (lint + test + build).  
 **Detailed plan (what / why / how + skeletons):** [`IMPLEMENTATION-PLAN.md`](./IMPLEMENTATION-PLAN.md).
 
