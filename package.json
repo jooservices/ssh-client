@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:e2e": "bash tools/e2e.sh",
     "ci": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
