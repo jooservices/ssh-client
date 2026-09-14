@@ -1,62 +1,46 @@
 # vigor3912s-client — Handover
 
 **Created:** 2026-09-14  
-**Scope this session:** scaffold + plan only (no SSH implementation yet).
+**Scope:** SSH client library only.
 
-## 0. Read order
+## Mission
 
-1. This file
-2. [`BACKLOG.md`](./BACKLOG.md) — Wave C tasks
-3. SDK `projects/vigor3912s/sdk/HANDOVER.md` §6a–§6b (`REQ-SDK-1`…`6`) — **blocker** for typed dependency
-4. Sibling reference (read-only): `projects/vigor3912s-mcp/src/ssh/driver.ts` (prompt, pager, host-key, mutex patterns)
+Ship a **standalone SSH client** (Node 24 / TypeScript) that any app can use
+to open a session, run commands, and read output. Primary target environment
+is a DrayTek Vigor 3912S DrayOS interactive shell, but the **public API is a
+generic SSH client** — not tied to any other product’s types or workflows.
 
-## 1. Mission
+## Non-negotiables
 
-Implement **`Transport`** for DrayOS over SSH so `@jooservices/vigor3912s-sdk`
-can talk to a real router **without** the SDK importing SSH.
+- **Client only.** No product-specific adapters, registries, or protocol layers
+  from other JOOservices apps in this package.
+- Do **not** document, import, or depend on other application packages.
+- Unit tests use fakes — no live router in CI.
+- Live smoke only with **explicit** user approval + credentials outside git.
+- Never commit `.env` / passwords / host keys as secrets in the repo.
+- Branches: `master` + `develop` only (no `main`).
 
-```text
-sdk  --uses-->  Transport (interface)
-client --implements-->  Transport   ← this package
-```
+## Current state
 
-## 2. Non-negotiables
-
-- **Do not** own MCP confirm / tools / audit.
-- **Do not** own typed domain ops / parsers (SDK).
-- **Do not** connect to a live router in CI unit tests.
-- Live E2E only with **explicit** user authorization + pinned host key.
-- Never commit `.env` / credentials.
-- Prefer implementing against SDK public `./transport` once REQ-SDK-1 lands.
-- Branch model: `master` + `develop` only (**no `main`**).
-
-## 3. Blockers
-
-| Blocker | Owner | Notes |
-| --- | --- | --- |
-| SDK public `Transport` export (`REQ-SDK-1`) | `vigor3912s/sdk` | Until then, only scaffold/plan; optional local type mirror marked TEMP |
-| Decision on package name publish | — | `@jooservices/vigor3912s-client` private until first release |
-
-## 4. Current state
-
-- GitHub: `jooservices/vigor3912s-client`
 - Local: `projects/vigor3912s-client`
-- `v0.0.0` scaffold: package metadata, stub `src/`, plan docs, CI stub
-- **No** working `SshTransport` yet
+- `v0.0.0` scaffold (metadata stub only)
+- **No** working SSH session implementation yet
 
-## 5. Suggested implementation order
+## Plan summary
 
-See `BACKLOG.md` Wave C (C0 → C6). Summary:
+Full plan: [`IMPLEMENTATION-PLAN.md`](./IMPLEMENTATION-PLAN.md).  
+Task list: [`BACKLOG.md`](./BACKLOG.md).
 
-1. Wait / pair on SDK `./transport` public export  
-2. `SshTransport` connect + host-key pin  
-3. Interactive shell: prompt `DrayTek> `, pager `--- MORE ---`  
-4. `send(frame)` one command / one exchange; timeouts; close  
-5. Tests with fake ssh2 (pattern from MCP `fake-ssh2`)  
-6. Optional live smoke (explicit auth)
+Build an SSH client with:
 
-## 6. Things NOT to do
+1. Connect options (host, port, user, password, host-key pin)
+2. Interactive shell I/O (prompt detection, pager, echo strip)
+3. Public API: connect → run command(s) → disconnect
+4. Tests with a fake SSH stack
+5. Docs + `.env.example` for operators
 
-- Do not reintroduce a full MCP `VigorClient` here (that adapter stays in MCP).
-- Do not add domain command registries.
+## Things NOT to do
+
+- Do not add application-specific command catalogs or confirm/audit flows.
+- Do not couple the public API to another package’s interfaces.
 - Do not force-push `master` / `develop`.

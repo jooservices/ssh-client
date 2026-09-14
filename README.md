@@ -4,30 +4,31 @@
 [![Node](https://img.shields.io/badge/Node-24%2B-blue.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Node 24 **DrayOS SSH client** for the DrayTek Vigor 3912S. Implements the
-`Transport` contract owned by [`@jooservices/vigor3912s-sdk`](https://github.com/jooservices/vigor3912s)
-(workspace: `projects/vigor3912s/sdk`).
+Node 24 **SSH client** library (TypeScript). Open a session, run commands on an
+interactive shell, read output. Tuned for DrayOS-style prompts and pagers on
+Vigor 3912S, usable as a general SSH exec helper from any Node app.
 
 ## Status
 
-**Scaffold + plan** (`v0.0.0`). No live SSH implementation yet. See
-[`HANDOVER.md`](./HANDOVER.md) and [`BACKLOG.md`](./BACKLOG.md).
+**Scaffold** (`v0.0.0`). Plan: [`BACKLOG.md`](./BACKLOG.md) · [`HANDOVER.md`](./HANDOVER.md).
 
-## Role in the three-package line
+## Intended API (planned)
 
-| Package | Role |
-| --- | --- |
-| `vigor3912s-sdk` | Typed CLI ops + **public `Transport` interface** |
-| **`vigor3912s-client`** *(this)* | **SSH wire** — implements `Transport` |
-| `vigor3912s-mcp` | MCP tools / confirm / audit (consumes SDK + client later) |
+```ts
+const client = new SshClient({
+  host: '192.168.1.1',
+  port: 22,
+  username: 'admin',
+  password: '…',
+  hostFingerprint: 'SHA256:…', // required unless insecure skip (tests only)
+});
 
-This package does **not** own domain parsers, MCP tools, or confirm gates.
+await client.connect();
+const out = await client.exec('sys version');
+await client.disconnect();
+```
 
-## Prerequisite
-
-SDK **REQ-SDK-1** must export `./transport` before this package can depend on
-the real types. Until then, local stubs may mirror the contract for planning
-only — do not diverge permanently.
+Exact method names may adjust during Wave C; see backlog.
 
 ## Development
 
@@ -41,5 +42,5 @@ npm run build
 
 ## Security
 
-Credentials and host-key pins belong in the consumer’s `.env` (never committed).
-See [`SECURITY.md`](./SECURITY.md).
+Pin host keys for live use. Keep credentials in `.env` (gitignored). See
+[`SECURITY.md`](./SECURITY.md).

@@ -8,4 +8,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Project scaffold and implementation plan for a DrayOS SSH `Transport` client.
+- Project scaffold and implementation plan for a standalone SSH client library.

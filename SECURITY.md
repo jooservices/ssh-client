@@ -7,14 +7,14 @@ Do **not** open a public issue. Report privately to
 
 ## Threat model
 
-This package will hold **router admin credentials** and open an SSH session to
-a Vigor 3912S on a trusted LAN. It must:
+This library will hold **SSH credentials** and open sessions to network hosts.
+It must:
 
-- Pin SSH host keys (reject MITM)
+- Pin SSH host keys by default (reject MITM)
 - Never log passwords or private key material
-- Keep management traffic off the public Internet by default
+- Prefer management on a trusted LAN
 
-## Non-goals
+## Operator guidance
 
-- MCP confirm gates / AI tool policy (belong in `vigor3912s-mcp`)
-- Typed CLI command catalogs (belong in `vigor3912s-sdk`)
+- Put secrets in `.env` (chmod 600, gitignored); use `.env.example` as a template
+- Set `hostFingerprint` for every non-test connection
