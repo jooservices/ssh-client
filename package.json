@@ -1,0 +1,42 @@
+{
+  "name": "@jooservices/vigor3912s-client",
+  "version": "0.0.0",
+  "description": "DrayOS SSH Transport client for Vigor 3912S — implements @jooservices/vigor3912s-sdk Transport.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "ci": "npm run lint && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "@jooservices/vigor3912s-sdk": "*"
+  },
+  "peerDependenciesMeta": {
+    "@jooservices/vigor3912s-sdk": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ssh2": "^1.15.6",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.0"
+  }
+}
