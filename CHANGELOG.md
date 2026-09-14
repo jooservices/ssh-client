@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-14
+
 ### Added
 
 - Per-command `idleTimeoutMs` on `ExecOptions` (no-output idle abort).
@@ -23,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- First stable **1.0.0** line for the interactive-shell SSH client API.
 - CI checkouts use `persist-credentials: false`.
 - Documented Node engine pin `>=24.21.0 <25` and full `ExecResult` timing fields.
 

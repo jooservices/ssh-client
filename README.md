@@ -12,10 +12,9 @@ output is handled automatically.
 
 ## Status
 
-**Next release: v1.0.0** (transport hardening + docs). Current tagged line is
-**v0.5.0**. The package stays private (`"private": true`) and is not published
-to npm; consume it from the checkout or a Git tag. See
-[`CHANGELOG.md`](./CHANGELOG.md).
+**v1.0.0** — stable interactive-shell SSH client API with host-key pinning.
+The package stays private (`"private": true`) and is not published to npm;
+consume it from the checkout or a Git tag. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Usage
 
