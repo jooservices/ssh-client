@@ -16,8 +16,9 @@
 | **C4** | P0 | **Public client API** — e.g. `connect()`, `exec(command, opts?) → string` (or structured result with stdout/timing), `disconnect()`, `isConnected`. Serialize concurrent exec on one session. Honor timeout / abort. | Unit tests on fake session; one command ↔ one response |
 | **C5** | P1 | **Session hygiene** — reconnect policy (document), idle/buffer caps, clean teardown. | Tests for close + serialize |
 | **C6** | P2 | **Docs** — README usage, `docs/usage.md`, `.env.example`. Optional live smoke script behind explicit flag (no credentials in repo). | Docs merged |
+| **C7** | P1 | **Docker Ubuntu E2E** — Ubuntu `sshd` container; `tools/e2e.sh` (build → run → fingerprint → vitest → teardown); `tests/e2e/*.test.ts`; CI `e2e` job. Opt-in (`test:e2e`), never in `npm test`. | `npm run test:e2e` + CI green |
 
-**Order:** C1 → C2 → C3 → C4 → C5 → C6.
+**Order:** C1 → C2 → C3 → C4 → C5 → C6 → C7.
 
 ## Out of scope
 
@@ -44,6 +45,12 @@ tests/
   client.test.ts
   shell-io.test.ts
   pager.test.ts
+  e2e/
+    client.e2e.test.ts
+docker/
+  Dockerfile        # Ubuntu sshd for E2E
+tools/
+  e2e.sh            # build → run → fingerprint → test → teardown
 docs/
   usage.md
 ```

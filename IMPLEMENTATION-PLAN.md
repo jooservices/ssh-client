@@ -152,6 +152,13 @@ projects/ssh-client/
 │   └── client.test.ts
 ├── docs/
 │   └── usage.md          # Operator + embedder guide (phase C6)
+├── docker/
+│   └── Dockerfile        # Ubuntu sshd container for E2E (phase C7)
+├── tools/
+│   └── e2e.sh            # Build, run, fingerprint, E2E test, teardown (C7)
+├── tests/
+│   └── e2e/
+│       └── client.e2e.test.ts  # Real client vs Ubuntu sshd (C7)
 ├── IMPLEMENTATION-PLAN.md
 ├── BACKLOG.md
 └── HANDOVER.md
@@ -600,6 +607,16 @@ export { fingerprintSha256 } from './host-key.js';
 | **How** | Smoke reads env; refuses to run without fingerprint; not invoked from `npm test`. |
 | **DoD** | Docs accurate; smoke documented as opt-in. |
 
+### C7 — Docker Ubuntu E2E
+
+| | |
+| --- | --- |
+| **What** | Real end-to-end: the built client connects over SSH to an **Ubuntu container** running `sshd`, with host-key pinning and prompt/pager handling — not just fakes. |
+| **Why** | Fakes cannot prove `ssh2` wiring, prompt detection against bash, or host-key verification against a real key exchange. A disposable container is safe for CI (no live router). |
+| **How** | `docker/` Dockerfile on `ubuntu:24.04` (LTS): install `openssh-server`, create a non-root user with a password, keep a host key that the harness can fingerprint; `tools/e2e.sh` builds the image, starts a container on a random localhost port, waits for ssh readiness, extracts the `SHA256:…` fingerprint (`ssh-keyscan` + `ssh-keygen -lf`), runs vitest `tests/e2e` with env vars set, then tears the container down. E2E is **opt-in** (`E2E=1` / `npm run test:e2e`), never part of `npm test`, and refuses to run without Docker. Ubuntu's `$` prompt is handled via the client's `promptRegex` option (also covers `#`/`>`). |
+| **Files** | `docker/Dockerfile`, `tools/e2e.sh`, `tests/e2e/client.e2e.test.ts`, `.github/workflows/ci.yml` (add `e2e` job on `ubuntu-latest`) |
+| **DoD** | `npm run test:e2e` green locally; CI `e2e` job green; `npm test` still green without Docker. |
+
 ---
 
 ## 6. PR slicing
@@ -609,6 +626,7 @@ export { fingerprintSha256 } from './host-key.js';
 | **PR1** | C1 + C2 | `npm run ci` green; host-key tests pass |
 | **PR2** | C3 + C4 | Fake e2e client tests pass |
 | **PR3** | C5 + C6 | Docs + hardening tests |
+| **PR4** | C7 | `npm run test:e2e` + CI `e2e` job green |
 
 Branch from local `develop`. Push/GitHub only when asked.
 
@@ -628,6 +646,9 @@ Branch from local `develop`. Push/GitHub only when asked.
 | AbortSignal | `closed` or abort error mapped |
 | Parallel exec | ordered results, no interleaved buffer corruption |
 | Double disconnect | no throw |
+| E2E connect + exec vs Ubuntu container | stdout without echo/prompt |
+| E2E host-key pin match | connect succeeds |
+| E2E host-key pin mismatch | `connect` error, no command run |
 
 ---
 
@@ -638,6 +659,7 @@ Branch from local `develop`. Push/GitHub only when asked.
 - [ ] README usage matches API  
 - [ ] No secrets in repo  
 - [ ] CHANGELOG notes first functional release when version bumps  
+- [ ] `npm run test:e2e` green against the Ubuntu container; CI runs both `ci` and `e2e` jobs  
 
 ---
 
@@ -651,6 +673,8 @@ Branch from local `develop`. Push/GitHub only when asked.
 | Concurrent exec | **Queue** | Single shell stream |
 | Exit codes | **None** | Shell sessions do not give reliable remote exit status |
 | Package coupling | **None** | Generic client for any consumer |
+| E2E target | **Ubuntu container (docker)** | Real `sshd` without touching a live router |
+| E2E gate | **Opt-in (`test:e2e`), not in `npm test`** | `npm test` must pass without Docker |
 
 ---
 
