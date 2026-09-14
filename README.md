@@ -1,45 +1,73 @@
-# jooservices/vigor3912s-client
+# jooservices/ssh-client
 
-[![CI](https://github.com/jooservices/vigor3912s-client/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/jooservices/vigor3912s-client/actions/workflows/ci.yml)
+[![CI](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/Node-24%2B-blue.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Node 24 **DrayOS SSH client** for the DrayTek Vigor 3912S. Implements the
-`Transport` contract owned by [`@jooservices/vigor3912s-sdk`](https://github.com/jooservices/vigor3912s)
-(workspace: `projects/vigor3912s/sdk`).
+Node 24 **SSH client** library (TypeScript). Open a session, run commands on an
+interactive shell, and read output. Works with any SSH server that exposes an
+interactive shell: prompt detection is configurable and `--- MORE ---` pager
+output is handled automatically.
 
 ## Status
 
-**Scaffold + plan** (`v0.0.0`). No live SSH implementation yet. See
-[`HANDOVER.md`](./HANDOVER.md) and [`BACKLOG.md`](./BACKLOG.md).
+**v0.5.0** — first release. The package stays private (`"private": true`) and is
+not published to npm yet; consume it from the checkout. See
+[`CHANGELOG.md`](./CHANGELOG.md).
 
-## Role in the three-package line
+## Usage
 
-| Package | Role |
-| --- | --- |
-| `vigor3912s-sdk` | Typed CLI ops + **public `Transport` interface** |
-| **`vigor3912s-client`** *(this)* | **SSH wire** — implements `Transport` |
-| `vigor3912s-mcp` | MCP tools / confirm / audit (consumes SDK + client later) |
+```ts
+import { SshClient } from '@jooservices/ssh-client';
 
-This package does **not** own domain parsers, MCP tools, or confirm gates.
+const client = new SshClient({
+  host: '192.168.1.1',
+  port: 22,
+  username: 'admin',
+  password: '…', // keep real credentials in a gitignored .env
+  hostFingerprint: 'SHA256:…', // required unless insecureSkipVerify (tests only)
+});
 
-## Prerequisite
+await client.connect();
+const { stdout, durationMs } = await client.exec('sys version');
+await client.disconnect();
+```
 
-SDK **REQ-SDK-1** must export `./transport` before this package can depend on
-the real types. Until then, local stubs may mirror the contract for planning
-only — do not diverge permanently.
+`exec()` returns `{ stdout, durationMs }`, accepts
+`{ timeoutMs, signal, maxPages, maxOutputBytes }`, auto-reconnects if the
+session was dropped, and serializes concurrent commands on one shell.
+Disconnecting twice is safe.
+
+## Highlights
+
+- **Interactive shell** — commands run on a real shell channel: write
+  `command\r`, read until the prompt (`promptRegex`, default `/(?:>|#)\s*$/m`),
+  strip the echoed command and trailing prompt, and drive the
+  `--- MORE ---` pager (space-scrolled, capped by `maxPages`, default 60).
+- **Host-key pinning** — connections fail closed unless `hostFingerprint`
+  (OpenSSH `SHA256:…` or hex form) is pinned and matched; `insecureSkipVerify`
+  is for tests only. `fingerprintSha256()` is exported to compute fingerprints.
 
 ## Development
 
 ```bash
-nvm use   # Node 24
+nvm use            # Node 24
 npm install
-npm run lint
-npm test
-npm run build
+npm run lint       # tsc --noEmit
+npm test           # vitest unit tests (fakes only, no live host)
+npm run build      # emit dist/
+npm run ci         # lint + test + build
+npm run test:e2e   # Docker Ubuntu sshd E2E — requires Docker
 ```
+
+Full embedder + operator guide: [`docs/usage.md`](./docs/usage.md).
 
 ## Security
 
-Credentials and host-key pins belong in the consumer’s `.env` (never committed).
-See [`SECURITY.md`](./SECURITY.md).
+Host keys are pinned by default — set `hostFingerprint` for every non-test
+connection. Keep credentials in a gitignored `.env`; template:
+[`.env.example`](./.env.example). See [`SECURITY.md`](./SECURITY.md).
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

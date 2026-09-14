@@ -7,3 +7,8 @@ coverage/
 *.log
 .DS_Store
 pending-confirms.json
+
+# Internal planning/handover docs — local only, not on GitHub
+BACKLOG.md
+HANDOVER.md
+IMPLEMENTATION-PLAN.md
