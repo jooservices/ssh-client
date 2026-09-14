@@ -11,8 +11,7 @@ Vigor 3912S, usable as a general SSH exec helper from any Node app.
 ## Status
 
 **Implemented** — v0.1.0 candidate (release, version bump, and publish not yet
-done). Tasks C1–C7 in [`BACKLOG.md`](./BACKLOG.md) are complete; see
-[`CHANGELOG.md`](./CHANGELOG.md) and [`HANDOVER.md`](./HANDOVER.md).
+done). Tasks C1–C7 are complete; see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Usage
 
