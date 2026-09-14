@@ -1,0 +1,9 @@
+#!/bin/sh
+# Conventional Commits check (English, imperative subject).
+MSG="$(cat "$1")"
+SUBJECT="$(printf '%s' "$MSG" | head -1)"
+if ! printf '%s' "$SUBJECT" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?: [A-Z]'; then
+  echo "commit-msg: subject must match 'type(scope): Uppercase imperative subject'" >&2
+  exit 1
+fi
+exit 0

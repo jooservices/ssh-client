@@ -18,6 +18,7 @@ describe('normalize', () => {
     ['lowercase SHA256 prefix', `sha256:${digestBase64}`, unpaddedFingerprint],
     ['uppercase SHA256 prefix', `SHA256:${digestBase64}`, unpaddedFingerprint],
     ['64-character hex digest', digestHex, unpaddedFingerprint],
+    ['opaque non-sha256 fingerprint', '  md5:legacy  ', 'md5:legacy'],
   ])('normalizes %s', (_caseName, input, expected) => {
     expect(normalize(input)).toBe(expected);
   });

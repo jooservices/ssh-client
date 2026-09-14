@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.21.0 <25"
   },
   "exports": {
     ".": {
@@ -20,8 +20,9 @@
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "bash tools/e2e.sh",
-    "ci": "npm run lint && npm test && npm run build"
+    "ci": "npm run lint && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "ssh2": "^1.16.0"
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ssh2": "^1.15.6",
+    "@vitest/coverage-v8": "^5.0.0",
     "typescript": "^5.7.0",
     "vitest": "^5.0.0"
   }
