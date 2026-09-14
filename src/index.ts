@@ -1,10 +1,10 @@
 /**
- * @jooservices/vigor3912s-client
+ * @jooservices/ssh-client
  *
  * Scaffold only — SSH client implementation is planned in BACKLOG.md Wave C.
  */
 
-export const clientPackageName = '@jooservices/vigor3912s-client' as const;
+export const clientPackageName = '@jooservices/ssh-client' as const;
 
 export interface ClientMetadata {
   readonly packageName: typeof clientPackageName;

@@ -1,4 +1,4 @@
-# vigor3912s-client — Implementation backlog
+# ssh-client — Implementation backlog
 
 **Status:** Scaffold. Client-only SSH library.  
 **Gate when coding:** `npm run ci` (lint + test + build).  

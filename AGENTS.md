@@ -1,4 +1,4 @@
-# jooservices/vigor3912s-client
+# jooservices/ssh-client
 
 This file adds project-only rules.
 

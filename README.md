@@ -1,6 +1,6 @@
-# jooservices/vigor3912s-client
+# jooservices/ssh-client
 
-[![CI](https://github.com/jooservices/vigor3912s-client/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/jooservices/vigor3912s-client/actions/workflows/ci.yml)
+[![CI](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/Node-24%2B-blue.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

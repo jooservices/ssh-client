@@ -1,5 +1,5 @@
 {
-  "name": "@jooservices/vigor3912s-client",
+  "name": "@jooservices/ssh-client",
   "version": "0.0.0",
   "description": "Node 24 SSH client library — interactive shell sessions, host-key pinning, usable from any app.",
   "private": true,

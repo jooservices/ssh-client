@@ -1,4 +1,4 @@
-# Implementation plan — vigor3912s-client
+# Implementation plan — ssh-client
 
 **Product:** Standalone Node 24 / TypeScript SSH client library  
 **Date:** 2026-09-14  
@@ -107,7 +107,7 @@ export declare class SshClient {
 ### 2.3 Usage sketch
 
 ```ts
-import { SshClient } from '@jooservices/vigor3912s-client';
+import { SshClient } from '@jooservices/ssh-client';
 
 const client = new SshClient({
   host: process.env.SSH_HOST!,
@@ -130,7 +130,7 @@ try {
 ## 3. Code structure (what each file is for)
 
 ```text
-projects/vigor3912s-client/
+projects/ssh-client/
 ├── src/
 │   ├── index.ts          # Public barrel (only stable exports)
 │   ├── options.ts        # Defaults + validation → ResolvedOptions

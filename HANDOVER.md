@@ -1,4 +1,4 @@
-# vigor3912s-client — Handover
+# ssh-client — Handover
 
 **Created:** 2026-09-14  
 **Scope:** SSH client library only.
@@ -22,7 +22,7 @@ generic SSH client** — not tied to any other product’s types or workflows.
 
 ## Current state
 
-- Local: `projects/vigor3912s-client`
+- Local: `projects/ssh-client`
 - `v0.0.0` scaffold (metadata stub only)
 - **No** working SSH session implementation yet
 
