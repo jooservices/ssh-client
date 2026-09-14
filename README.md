@@ -5,8 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Node 24 **SSH client** library (TypeScript). Open a session, run commands on an
-interactive shell, read output. Tuned for DrayOS-style prompts and pagers on
-Vigor 3912S, usable as a general SSH exec helper from any Node app.
+interactive shell, and read output. Works with any SSH server that exposes an
+interactive shell: prompt detection is configurable and `--- MORE ---` pager
+output is handled automatically.
 
 ## Status
 
