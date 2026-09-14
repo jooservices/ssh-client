@@ -45,9 +45,14 @@ describe('SshClient', () => {
     expect(first.stdout).toBe(firstBody.trim());
     expect(second.stdout).toBe(secondBody.trim());
     expect(first.durationMs).toBeGreaterThanOrEqual(0);
+    expect(first.sendAt).toBeLessThanOrEqual(first.recvAt);
+    expect(first.connectMs).toBeGreaterThanOrEqual(0);
+    expect(client.shellWindow).toEqual({ term: 'vt100', rows: 200, cols: 200 });
+    expect(fake.shellOptions).toEqual({ term: 'vt100', rows: 200, cols: 200 });
     expect(client.connected).toBe(false);
     expect(fake.channel.closed).toBe(true);
     expect(fake.ended).toBe(true);
+    expect(fake.channel.writes.some((w) => String(w).includes('exit'))).toBe(true);
   });
 
   it('serializes concurrent exec calls in FIFO order without interleaving commands', async () => {

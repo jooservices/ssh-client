@@ -47,6 +47,27 @@ describe('resolveOptions', () => {
       maxOutputBytes: DEFAULTS.maxOutputBytes,
       settleMs: DEFAULTS.settleMs,
       promptRegex: DEFAULTS.promptRegex,
+      term: DEFAULTS.term,
+      rows: DEFAULTS.rows,
+      cols: DEFAULTS.cols,
+      idleBufferMaxBytes: DEFAULTS.idleBufferMaxBytes,
+    });
+  });
+
+  it('keeps explicit PTY and idle buffer overrides', () => {
+    const resolved = resolveOptions({
+      ...validOptions,
+      term: 'xterm',
+      rows: 40,
+      cols: 80,
+      idleBufferMaxBytes: 1024,
+    });
+
+    expect(resolved).toMatchObject({
+      term: 'xterm',
+      rows: 40,
+      cols: 80,
+      idleBufferMaxBytes: 1024,
     });
   });
 
@@ -72,5 +93,11 @@ describe('resolveOptions', () => {
       settleMs: 4,
       promptRegex,
     });
+  });
+
+  it('rejects out-of-range numeric options', () => {
+    expect(() => resolveOptions({ ...validOptions, port: 0 })).toThrow(/port must be/);
+    expect(() => resolveOptions({ ...validOptions, commandTimeoutMs: -1 })).toThrow(/commandTimeoutMs/);
+    expect(() => resolveOptions({ ...validOptions, settleMs: -1 })).toThrow(/settleMs/);
   });
 });
