@@ -1,13 +1,14 @@
 import { Client } from 'ssh2';
 import { SshClientError } from './errors.js';
 import { hostKeyMatches } from './host-key.js';
-import type { ResolvedOptions } from './options.js';
-import { waitForPrompt } from './shell-io.js';
+import { ptyOptions, type ResolvedOptions } from './options.js';
+import type { ShellPtyOptions } from './public-types.js';
+import { ShellIo, type ShellStream } from './shell-io.js';
 
 type ClientEvent = 'ready' | 'error' | 'close';
 type ChannelEvent = 'close' | 'end' | 'error';
 
-export interface ShellChannelLike {
+export interface ShellChannelLike extends ShellStream {
   close: () => void;
   on(event: ChannelEvent, listener: (err?: unknown) => void): unknown;
   on(event: 'data', listener: (chunk: Buffer) => void): unknown;
@@ -20,7 +21,10 @@ export interface Ssh2ClientLike {
   on: (event: ClientEvent, listener: (...args: unknown[]) => void) => Ssh2ClientLike;
   removeListener: (event: ClientEvent, listener: (...args: unknown[]) => void) => Ssh2ClientLike;
   connect: (config: Ssh2ConnectConfig) => Ssh2ClientLike;
-  shell: (callback: (err: Error | undefined, stream?: ShellChannelLike) => void) => void;
+  shell: (
+    window: ShellPtyOptions,
+    callback: (err: Error | undefined, stream?: ShellChannelLike) => void,
+  ) => void;
   end: () => void;
 }
 
@@ -38,7 +42,10 @@ export type Ssh2ClientFactory = () => Ssh2ClientLike;
 export class SshSession {
   private client: Ssh2ClientLike | null = null;
   private stream: ShellChannelLike | null = null;
+  private io: ShellIo | null = null;
   private connecting: Promise<void> | null = null;
+  private connectEpoch = 0;
+  private lastShellWindow: ShellPtyOptions | null = null;
 
   constructor(
     private readonly opts: ResolvedOptions,
@@ -46,7 +53,18 @@ export class SshSession {
   ) {}
 
   get isOpen(): boolean {
-    return this.client !== null && this.stream !== null;
+    return this.client !== null && this.stream !== null && this.io !== null;
+  }
+
+  get shellWindow(): ShellPtyOptions | null {
+    return this.lastShellWindow;
+  }
+
+  getIo(): ShellIo {
+    if (!this.io) {
+      throw new SshClientError('closed', 'not connected');
+    }
+    return this.io;
   }
 
   async connect(): Promise<void> {
@@ -59,6 +77,7 @@ export class SshSession {
     }
 
     const client = this.clientFactory();
+    const epoch = ++this.connectEpoch;
 
     this.connecting = new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -75,6 +94,7 @@ export class SshSession {
 
         settled = true;
         cleanup();
+        this.teardownIo();
         client.end();
         this.client = null;
         this.stream = null;
@@ -82,25 +102,56 @@ export class SshSession {
       };
 
       const onReady = (): void => {
-        client.shell((err, stream) => {
+        const window = ptyOptions(this.opts);
+        this.lastShellWindow = window;
+        client.shell(window, (err, stream) => {
           if (err || !stream) {
             fail('connect', err?.message ?? 'shell failed');
+            return;
+          }
+
+          if (epoch !== this.connectEpoch) {
+            try {
+              stream.close();
+            } catch {
+              /* ignore */
+            }
+            client.end();
+            fail('connect', 'disconnected during connect');
             return;
           }
 
           cleanup();
           this.client = client;
           this.stream = stream;
+          this.io = new ShellIo(stream, this.opts);
           this.watchSessionClose(client, stream);
 
-          waitForPrompt(stream, {
-            promptRegex: this.opts.promptRegex,
-            settleMs: this.opts.settleMs,
-            timeoutMs: this.opts.readyTimeoutMs,
-            timeoutMessage: `ready prompt timed out after ${this.opts.readyTimeoutMs}ms`,
-          })
+          this.io
+            .waitForReady({
+              promptRegex: this.opts.promptRegex,
+              settleMs: this.opts.settleMs,
+              timeoutMs: this.opts.readyTimeoutMs,
+              timeoutMessage: `ready prompt timed out after ${this.opts.readyTimeoutMs}ms`,
+              readyPoke: true,
+            })
             .then(() => {
               if (settled) {
+                return;
+              }
+
+              if (epoch !== this.connectEpoch) {
+                this.teardownIo();
+                this.stream = null;
+                this.client = null;
+                try {
+                  stream.close();
+                } catch {
+                  /* ignore */
+                }
+                client.end();
+                settled = true;
+                reject(new SshClientError('closed', 'disconnected during connect'));
                 return;
               }
 
@@ -142,14 +193,29 @@ export class SshSession {
   }
 
   async disconnect(): Promise<void> {
+    this.connectEpoch += 1;
     const stream = this.stream;
     const client = this.client;
 
-    stream?.close();
-    client?.end();
+    if (stream) {
+      try {
+        stream.write('exit\r');
+      } catch {
+        /* ignore */
+      }
+    }
+
+    this.teardownIo();
     this.stream = null;
     this.client = null;
     this.connecting = null;
+    stream?.close();
+    client?.end();
+  }
+
+  private teardownIo(): void {
+    this.io?.detach();
+    this.io = null;
   }
 
   private connectConfig(): Ssh2ConnectConfig {
@@ -177,6 +243,8 @@ export class SshSession {
       if (this.stream === stream) {
         this.stream = null;
       }
+
+      this.teardownIo();
     };
 
     stream.on('close', clear);

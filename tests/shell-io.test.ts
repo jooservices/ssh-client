@@ -130,11 +130,12 @@ describe('cleanOutput', () => {
 
 function options(overrides: Partial<Parameters<typeof runCommandOnShell>[2]> = {}): Parameters<typeof runCommandOnShell>[2] {
   return {
-    commandTimeoutMs: 100,
+    commandTimeoutMs: 500,
     maxPages: 4,
     maxOutputBytes: 8_388_608,
     promptRegex,
     settleMs: 0,
+    idleBufferMaxBytes: 64 * 1024,
     ...overrides,
   };
 }

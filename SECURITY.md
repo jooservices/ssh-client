@@ -18,3 +18,5 @@ It must:
 
 - Put secrets in `.env` (chmod 600, gitignored); use `.env.example` as a template
 - Set `hostFingerprint` for every non-test connection
+- Prefer short `commandTimeoutMs` / optional `idleTimeoutMs` so hung shells fail closed
+- Never enable `insecureSkipVerify` against untrusted networks

@@ -24,6 +24,9 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     const result = await client.exec('echo hello');
 
     expect(result.stdout).toBe('hello');
+    expect(result.sendAt).toBeLessThanOrEqual(result.recvAt);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(client.shellWindow).toMatchObject({ term: 'vt100', rows: 200, cols: 200 });
   });
 
   it('executes whoami as tester', async () => {
@@ -52,6 +55,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     const result = await client.exec('echo reconnected');
 
     expect(result.stdout).toBe('reconnected');
+    expect(result.connectMs).toBeGreaterThan(0);
   });
 
   it('rejects host-key mismatch before running commands', async () => {

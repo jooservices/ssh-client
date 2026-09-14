@@ -6,9 +6,12 @@ export interface FakeSsh2ClientOptions {
   authFailure?: boolean;
   connectError?: Error;
   shellError?: Error;
+  shellDelayMs?: number;
   channel?: FakeSsh2Channel;
   banner?: string;
   initialPrompt?: string;
+  initialPromptDelayMs?: number;
+  promptOnPoke?: boolean;
   commands?: Record<string, FakeCommandScript>;
 }
 
@@ -33,6 +36,9 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
   readonly writes: Array<string | Buffer> = [];
   readonly commands: string[] = [];
   closed = false;
+  private pendingChunks: string[] | null = null;
+  private pendingPrompt: string | null = null;
+  private pendingEcho: string | null = null;
 
   constructor(private readonly options: FakeSsh2ChannelOptions = {}) {
     super();
@@ -42,6 +48,25 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     this.writes.push(data);
 
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+
+    if (text === ' ' && this.pendingChunks && this.pendingChunks.length > 0) {
+      this.emitText(this.pendingChunks.shift()!);
+      if (this.pendingChunks.length === 0) {
+        this.finishPendingCommand();
+      }
+      return true;
+    }
+
+    if (text === 'q' && this.pendingChunks) {
+      this.pendingChunks = [];
+      this.finishPendingCommand();
+      return true;
+    }
+
+    if (text === '\r' && this.options.prompt) {
+      this.emitText(this.options.prompt);
+      return true;
+    }
 
     if (text.endsWith('\r')) {
       const command = text.trim();
@@ -69,6 +94,17 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     this.emit('error', error);
   }
 
+  private finishPendingCommand(): void {
+    if (this.pendingEcho) {
+      // already echoed at start
+      this.pendingEcho = null;
+    }
+    const prompt = this.pendingPrompt ?? this.options.prompt ?? 'router# ';
+    this.pendingChunks = null;
+    this.pendingPrompt = null;
+    this.emitText(prompt);
+  }
+
   private emitCommand(command: string): void {
     const script = this.options.commands?.[command];
 
@@ -77,27 +113,45 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     }
 
     const prompt = script.prompt ?? this.options.prompt ?? 'router# ';
-    const chunks = script.chunks ?? [script.body ?? ''];
+    const chunks = [...(script.chunks ?? [script.body ?? ''])];
     const delayMs = script.delayMs ?? 0;
     const emit = (): void => {
       if (script.echo !== false) {
         this.emitText(`${command}\r\n`);
       }
 
-      for (const chunk of chunks) {
-        this.emitText(chunk);
-      }
-
       if (script.channelEvent) {
+        for (const chunk of chunks) {
+          this.emitText(chunk);
+        }
         this.emitScriptChannelEvent(script);
         return;
       }
 
       if (script.clientClose) {
+        for (const chunk of chunks) {
+          this.emitText(chunk);
+        }
         this.options.onClientClose?.();
         return;
       }
 
+      const first = chunks.shift() ?? '';
+      const hasMorePages = chunks.length > 0 && /---\s*MORE\s*---/i.test(first);
+      if (hasMorePages) {
+        this.pendingChunks = chunks;
+        this.pendingPrompt = prompt;
+      }
+
+      this.emitText(first);
+
+      if (hasMorePages) {
+        return;
+      }
+
+      for (const chunk of chunks) {
+        this.emitText(chunk);
+      }
       this.emitText(prompt);
     };
 
@@ -128,6 +182,7 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
   readonly hostVerifierKeys: Buffer[] = [];
   readonly channel: FakeSsh2Channel;
   connectConfig: Ssh2ConnectConfig | null = null;
+  shellOptions: { term: string; rows: number; cols: number } | null = null;
   ended = false;
 
   constructor(private readonly options: FakeSsh2ClientOptions = {}) {
@@ -180,14 +235,33 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
     return this;
   }
 
-  shell(callback: (err: Error | undefined, stream?: ShellChannelLike) => void): void {
-    queueMicrotask(() => {
+  shell(
+    options: { term: string; rows: number; cols: number },
+    callback: (err: Error | undefined, stream?: ShellChannelLike) => void,
+  ): void {
+    this.shellOptions = options;
+    const run = (): void => {
       callback(this.options.shellError, this.options.shellError ? undefined : this.channel);
 
       if (!this.options.shellError) {
-        this.channel.emitText(`${this.options.banner ?? ''}${this.options.initialPrompt ?? 'router# '}`);
+        const emitPrompt = (): void => {
+          this.channel.emitText(`${this.options.banner ?? ''}${this.options.initialPrompt ?? 'router# '}`);
+        };
+
+        if (this.options.initialPromptDelayMs) {
+          setTimeout(emitPrompt, this.options.initialPromptDelayMs);
+        } else if (!this.options.promptOnPoke) {
+          emitPrompt();
+        }
       }
-    });
+    };
+
+    if (this.options.shellDelayMs && this.options.shellDelayMs > 0) {
+      setTimeout(run, this.options.shellDelayMs);
+      return;
+    }
+
+    queueMicrotask(run);
   }
 
   end(): void {

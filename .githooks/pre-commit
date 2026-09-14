@@ -1,0 +1,15 @@
+#!/bin/sh
+# Pre-commit: no whitespace errors; .env never committed; lint passes.
+if git diff --cached --check | grep -q .; then
+  echo "pre-commit: whitespace errors (git diff --check)" >&2
+  exit 1
+fi
+if git diff --cached --name-only | grep -qx '.env'; then
+  echo "pre-commit: .env must not be committed" >&2
+  exit 1
+fi
+if ! npm run lint --silent; then
+  echo "pre-commit: npm run lint failed" >&2
+  exit 1
+fi
+exit 0

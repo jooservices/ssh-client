@@ -79,6 +79,40 @@ describe('SshSession', () => {
 
     expect(() => session.getStream()).toThrow(SshClientError);
     expect(() => session.getStream()).toThrow('not connected');
+    expect(() => session.getIo()).toThrow(SshClientError);
+    expect(() => session.getIo()).toThrow('not connected');
+  });
+
+  it('returns immediately when connect is called on an open session', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    await session.connect();
+    await session.connect();
+
+    expect(session.isOpen).toBe(true);
+    expect(session.getIo()).toBeTruthy();
+  });
+
+  it('shares one in-flight connect promise across concurrent callers', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    const first = session.connect();
+    const second = session.connect();
+    await Promise.all([first, second]);
+
+    expect(session.isOpen).toBe(true);
+  });
+
+  it('maps channel close during ready wait to connect (not timeout)', async () => {
+    const fake = new FakeSsh2Client({ hostKey, initialPromptDelayMs: 5_000 });
+    const session = sessionWith(fake, { readyTimeoutMs: 5_000, settleMs: 0 });
+    const pending = session.connect();
+    await new Promise((r) => setTimeout(r, 20));
+    fake.channel.close();
+    await expect(pending).rejects.toMatchObject({ code: 'connect' });
+    expect(session.isOpen).toBe(false);
   });
 
   it('disconnects idempotently and clears client and stream state', async () => {
@@ -104,13 +138,39 @@ describe('SshSession', () => {
     expect(session.isOpen).toBe(false);
   });
 
-  it('marks the session closed when the ssh client emits close', async () => {
-    const fake = new FakeSsh2Client({ hostKey });
+  it('times out when the ready prompt is delayed past readyTimeoutMs', async () => {
+    const fake = new FakeSsh2Client({
+      hostKey,
+      initialPromptDelayMs: 5_000,
+    });
+    const session = sessionWith(fake, { readyTimeoutMs: 80, settleMs: 0 });
+    await expect(session.connect()).rejects.toMatchObject({ code: 'timeout' });
+    expect(session.isOpen).toBe(false);
+  });
+
+  it('maps non-Error connect failures to connect', async () => {
+    const fake = new FakeSsh2Client({ hostKey, connectError: 'socket hung up' as unknown as Error });
     const session = sessionWith(fake);
+    await expect(session.connect()).rejects.toMatchObject({ code: 'connect' });
+  });
 
-    await session.connect();
-    fake.emitClose();
+  it('disconnect during ready wait leaves the session closed', async () => {
+    const fake = new FakeSsh2Client({ hostKey, initialPromptDelayMs: 5_000 });
+    const session = sessionWith(fake, { readyTimeoutMs: 5_000, settleMs: 0 });
+    const pending = session.connect();
+    await new Promise((r) => setTimeout(r, 20));
+    await session.disconnect();
+    await expect(pending).rejects.toMatchObject({ code: expect.stringMatching(/^(closed|connect)$/) });
+    expect(session.isOpen).toBe(false);
+  });
 
+  it('disconnect before shell opens rejects connect and stays closed', async () => {
+    const fake = new FakeSsh2Client({ hostKey, shellDelayMs: 80 });
+    const session = sessionWith(fake, { settleMs: 0 });
+    const pending = session.connect();
+    await new Promise((r) => setTimeout(r, 20));
+    await session.disconnect();
+    await expect(pending).rejects.toMatchObject({ message: /disconnected during connect/ });
     expect(session.isOpen).toBe(false);
   });
 });
