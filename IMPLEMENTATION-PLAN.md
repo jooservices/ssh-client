@@ -67,6 +67,7 @@ export interface SshClientOptions {
   readyTimeoutMs?: number;       // default 20_000
   commandTimeoutMs?: number;     // default 15_000
   maxPages?: number;             // default 60
+  maxOutputBytes?: number;       // default 8_388_608 — cap buffered command output
   settleMs?: number;             // default 150 — wait after prompt before resolving
   /** Optional override if firmware prompt differs. Default: /(?:>|#)\s*$/m */
   promptRegex?: RegExp;
@@ -76,6 +77,7 @@ export interface ExecOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   maxPages?: number;
+  maxOutputBytes?: number;       // default 8_388_608 — cap buffered command output
 }
 
 export interface ExecResult {

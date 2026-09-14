@@ -139,6 +139,25 @@ describe('SshClient', () => {
     expect(client.connected).toBe(true);
   });
 
+  it('auto-reconnects when the remote closes the shell channel', async () => {
+    const command = `after remote close ${randomUUID()}`;
+    const firstFake = enqueueFake();
+    const secondFake = enqueueFake({ commands: { [command]: { body: `reconnected ${randomUUID()}\n` } } });
+    const client = createClient();
+
+    await client.connect();
+    firstFake.channel.close();
+
+    expect(client.connected).toBe(false);
+
+    const result = await client.exec(command);
+
+    expect(client.connected).toBe(true);
+    expect(result.stdout).toMatch(/^reconnected /u);
+    expect(secondFake.connectConfig).not.toBeNull();
+    expect(secondFake.channel.commands).toEqual([command]);
+  });
+
   it('rejects exec-after-failed-connect with a connect error', async () => {
     const command = `failed connect ${randomUUID()}`;
     enqueueFake({ connectError: new Error('network unreachable'), commands: { [command]: { body: 'unreachable\n' } } });

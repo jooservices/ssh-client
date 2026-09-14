@@ -4,12 +4,15 @@ import { hostKeyMatches } from './host-key.js';
 import type { ResolvedOptions } from './options.js';
 import { waitForPrompt } from './shell-io.js';
 
-type ClientEvent = 'ready' | 'error';
+type ClientEvent = 'ready' | 'error' | 'close';
+type ChannelEvent = 'close' | 'end' | 'error';
 
 export interface ShellChannelLike {
   close: () => void;
-  on: (event: 'data', listener: (chunk: Buffer) => void) => unknown;
-  removeListener: (event: 'data', listener: (chunk: Buffer) => void) => unknown;
+  on(event: ChannelEvent, listener: (err?: unknown) => void): unknown;
+  on(event: 'data', listener: (chunk: Buffer) => void): unknown;
+  removeListener(event: ChannelEvent, listener: (err?: unknown) => void): unknown;
+  removeListener(event: 'data', listener: (chunk: Buffer) => void): unknown;
   write: (data: string | Buffer) => unknown;
 }
 
@@ -88,6 +91,7 @@ export class SshSession {
           cleanup();
           this.client = client;
           this.stream = stream;
+          this.watchSessionClose(client, stream);
 
           waitForPrompt(stream, {
             promptRegex: this.opts.promptRegex,
@@ -138,8 +142,11 @@ export class SshSession {
   }
 
   async disconnect(): Promise<void> {
-    this.stream?.close();
-    this.client?.end();
+    const stream = this.stream;
+    const client = this.client;
+
+    stream?.close();
+    client?.end();
     this.stream = null;
     this.client = null;
     this.connecting = null;
@@ -159,6 +166,23 @@ export class SshSession {
     }
 
     return config;
+  }
+
+  private watchSessionClose(client: Ssh2ClientLike, stream: ShellChannelLike): void {
+    const clear = (): void => {
+      if (this.client === client) {
+        this.client = null;
+      }
+
+      if (this.stream === stream) {
+        this.stream = null;
+      }
+    };
+
+    stream.on('close', clear);
+    stream.on('end', clear);
+    stream.on('error', clear);
+    client.on('close', clear);
   }
 }
 

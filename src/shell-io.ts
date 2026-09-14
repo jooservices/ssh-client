@@ -4,8 +4,10 @@ import { handlePagerIfNeeded, type PagerState } from './pager.js';
 
 export interface ShellStream {
   write: (data: string) => unknown;
-  on: (event: 'data', cb: (chunk: Buffer) => void) => unknown;
-  removeListener: (event: 'data', cb: (chunk: Buffer) => void) => unknown;
+  on(event: 'close' | 'end' | 'error', cb: (err?: unknown) => void): unknown;
+  on(event: 'data', cb: (chunk: Buffer) => void): unknown;
+  removeListener(event: 'close' | 'end' | 'error', cb: (err?: unknown) => void): unknown;
+  removeListener(event: 'data', cb: (chunk: Buffer) => void): unknown;
 }
 
 export interface PromptWaitOptions {
@@ -19,9 +21,13 @@ export function waitForPrompt(stream: ShellStream, opts: PromptWaitOptions): Pro
   return new Promise<string>((resolve, reject) => {
     let buf = '';
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const promptRegex = normalizePromptRegex(opts.promptRegex);
 
     const cleanup = (): void => {
       stream.removeListener('data', onData);
+      stream.removeListener('close', onClosed);
+      stream.removeListener('end', onClosed);
+      stream.removeListener('error', onClosed);
       clearTimeout(timer);
 
       if (settleTimer) {
@@ -36,9 +42,8 @@ export function waitForPrompt(stream: ShellStream, opts: PromptWaitOptions): Pro
 
     const onData = (chunk: Buffer): void => {
       buf += chunk.toString('utf8');
-      opts.promptRegex.lastIndex = 0;
 
-      if (opts.promptRegex.test(buf)) {
+      if (matchesPromptTail(buf, promptRegex)) {
         if (settleTimer) {
           clearTimeout(settleTimer);
         }
@@ -47,12 +52,20 @@ export function waitForPrompt(stream: ShellStream, opts: PromptWaitOptions): Pro
       }
     };
 
+    const onClosed = (err?: unknown): void => {
+      cleanup();
+      reject(new SshClientError('closed', closedMessage(err)));
+    };
+
     const timer = setTimeout(() => {
       cleanup();
       reject(new SshClientError('timeout', opts.timeoutMessage));
     }, opts.timeoutMs);
 
     stream.on('data', onData);
+    stream.on('close', onClosed);
+    stream.on('end', onClosed);
+    stream.on('error', onClosed);
   });
 }
 
@@ -76,9 +89,13 @@ export function runCommandOnShell(
     let buf = '';
     const pager: PagerState = { pages: 0 };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const promptRegex = normalizePromptRegex(opts.promptRegex);
 
     const cleanup = (): void => {
       stream.removeListener('data', onData);
+      stream.removeListener('close', onClosed);
+      stream.removeListener('end', onClosed);
+      stream.removeListener('error', onClosed);
       clearTimeout(timer);
 
       if (settleTimer) {
@@ -90,7 +107,7 @@ export function runCommandOnShell(
 
     const finish = (): void => {
       cleanup();
-      resolve(cleanOutput(buf, command, opts.promptRegex));
+      resolve(cleanOutput(buf, command, promptRegex));
     };
 
     const onData = (chunk: Buffer): void => {
@@ -110,9 +127,7 @@ export function runCommandOnShell(
         return;
       }
 
-      opts.promptRegex.lastIndex = 0;
-
-      if (opts.promptRegex.test(buf)) {
+      if (matchesPromptTail(buf, promptRegex)) {
         if (settleTimer) {
           clearTimeout(settleTimer);
         }
@@ -126,6 +141,11 @@ export function runCommandOnShell(
       reject(new SshClientError('closed', 'aborted'));
     };
 
+    const onClosed = (err?: unknown): void => {
+      cleanup();
+      reject(new SshClientError('closed', closedMessage(err)));
+    };
+
     const timer = setTimeout(() => {
       cleanup();
       reject(new SshClientError('timeout', `command timed out after ${timeoutMs}ms`));
@@ -133,6 +153,9 @@ export function runCommandOnShell(
 
     signal?.addEventListener('abort', onAbort, { once: true });
     stream.on('data', onData);
+    stream.on('close', onClosed);
+    stream.on('end', onClosed);
+    stream.on('error', onClosed);
     stream.write(`${command}\r`);
   });
 }
@@ -154,9 +177,7 @@ export function cleanOutput(raw: string, command: string, promptRegex: RegExp = 
       continue;
     }
 
-    promptRegex.lastIndex = 0;
-
-    if (promptRegex.test(last)) {
+    if (matchesPromptTail(last, promptRegex)) {
       lines.pop();
       continue;
     }
@@ -173,4 +194,31 @@ function echoRegex(command: string): RegExp {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesPromptTail(buffer: string, promptRegex: RegExp): boolean {
+  const tail = buffer.slice(buffer.lastIndexOf('\n') + 1);
+
+  promptRegex.lastIndex = 0;
+  return promptRegex.test(tail);
+}
+
+function normalizePromptRegex(promptRegex: RegExp): RegExp {
+  if (!promptRegex.flags.includes('g')) {
+    return promptRegex;
+  }
+
+  return new RegExp(promptRegex.source, promptRegex.flags.replaceAll('g', ''));
+}
+
+function closedMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  if (typeof err === 'string' && err.trim() !== '') {
+    return err;
+  }
+
+  return 'channel closed';
 }

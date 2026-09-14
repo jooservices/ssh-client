@@ -59,6 +59,20 @@ describe('runCommandOnShell', () => {
     expect(channel.listenerCount('data')).toBe(0);
   });
 
+  it('rejects closed when the stream closes before the prompt arrives', async () => {
+    const command = `closed command ${randomUUID()}`;
+    const channel = new FakeSsh2Channel({
+      commands: { [command]: { body: `partial ${randomUUID()}\n`, channelEvent: 'close' } },
+      prompt,
+    });
+
+    await expect(runCommandOnShell(channel, command, options({ commandTimeoutMs: 100 }))).rejects.toMatchObject({
+      code: 'closed',
+      message: 'channel closed',
+    });
+    expect(channel.listenerCount('data')).toBe(0);
+  });
+
   it('rejects invalid and removes the data listener when output exceeds maxOutputBytes before the prompt', async () => {
     const command = `large output ${randomUUID()}`;
     const channel = new FakeSsh2Channel({ commands: { [command]: { body: '1234567890\n' } }, prompt });
@@ -80,6 +94,28 @@ describe('runCommandOnShell', () => {
 
     expect(stdout).toContain('first');
     expect(stdout).toContain('second');
+  });
+
+  it('waits for the tail prompt when command output contains a prompt-like body line', async () => {
+    const command = `tail prompt ${randomUUID()}`;
+    const finalValue = `final ${randomUUID()}`;
+    const channel = new FakeSsh2Channel({ prompt });
+    let settled = false;
+
+    const stdout = runCommandOnShell(channel, command, options({ commandTimeoutMs: 100 })).then((value) => {
+      settled = true;
+
+      return value;
+    });
+
+    channel.emitText(`${command}\r\nconfig value #\r\n`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(settled).toBe(false);
+
+    channel.emitText(`${finalValue}\r\n${prompt}`);
+
+    await expect(stdout).resolves.toBe(`config value #\n${finalValue}`);
   });
 });
 

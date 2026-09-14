@@ -93,4 +93,24 @@ describe('SshSession', () => {
     expect(fake.channel.closed).toBe(true);
     expect(fake.ended).toBe(true);
   });
+
+  it('marks the session closed when the remote closes the shell channel', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    await session.connect();
+    fake.channel.close();
+
+    expect(session.isOpen).toBe(false);
+  });
+
+  it('marks the session closed when the ssh client emits close', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    await session.connect();
+    fake.emitClose();
+
+    expect(session.isOpen).toBe(false);
+  });
 });
