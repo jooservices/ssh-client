@@ -4,12 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-14
 
 ### Added
 
 - Project scaffold and implementation plan for a standalone SSH client library.
-- SSH client implementation (v0.1.0 candidate, tasks C1–C7):
+- SSH client implementation (tasks C1–C7):
   - `SshClient` public API: `connect()`, `exec(command, options?)`,
     `disconnect()`, and the `connected` getter; `exec` returns
     `{ stdout, durationMs }`.
