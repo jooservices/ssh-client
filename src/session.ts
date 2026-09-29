@@ -1,4 +1,10 @@
 import { Client } from 'ssh2';
+import {
+  classifyConnectError,
+  decideAttempt,
+  type AttemptEffect,
+  type AttemptSnapshot,
+} from './attempt-plan.js';
 import { SshClientError, type SshErrorCode } from './errors.js';
 import { hostKeyMatches } from './host-key.js';
 import { ptyOptions, type ResolvedOptions } from './options.js';
@@ -207,12 +213,18 @@ export class SshSession {
   }
 
   private onClientReady(attempt: ConnectionAttempt): void {
-    if (attempt.tornDown || this.inflight?.attempt !== attempt || this.inflight.settled) {
+    const effect = decideAttempt(this.snapshot(attempt), {
+      type: 'ready',
+      remainingMs: this.remaining(attempt),
+      timeoutMessage: this.readyTimeoutMessage(),
+    });
+
+    if (effect.type === 'fail') {
+      this.apply(attempt, effect);
       return;
     }
 
-    if (this.remaining(attempt) === 0) {
-      this.failInflight(attempt, 'timeout', this.readyTimeoutMessage());
+    if (effect.type !== 'open-shell') {
       return;
     }
 
@@ -233,71 +245,39 @@ export class SshSession {
       attempt.shellTimer = null;
     }
 
-    if (attempt.tornDown || this.inflight?.attempt !== attempt || this.inflight.settled) {
-      if (stream) {
-        try {
-          stream.close();
-        } catch {
-          /* stale shell */
-        }
-      }
-      return;
-    }
-
-    if (err || !stream) {
-      if (stream) {
-        try {
-          stream.close();
-        } catch {
-          /* ignore */
-        }
-      }
-      this.failInflight(attempt, 'connect', err?.message ?? 'shell failed');
-      return;
-    }
-
     const left = this.remaining(attempt);
+    const effect = decideAttempt(this.snapshot(attempt), {
+      type: 'shell',
+      hasStream: stream !== undefined,
+      failed: err !== undefined || stream === undefined,
+      remainingMs: left,
+      failureMessage: err?.message ?? 'shell failed',
+      timeoutMessage: this.readyTimeoutMessage(),
+    });
 
-    if (left === 0) {
-      try {
-        stream.close();
-      } catch {
-        /* ignore */
-      }
-      this.failInflight(attempt, 'timeout', this.readyTimeoutMessage());
+    if (effect.type !== 'attach-shell') {
+      this.apply(attempt, effect, stream);
+      return;
+    }
+
+    const inflight = this.inflight;
+
+    if (!stream || !inflight) {
       return;
     }
 
     attempt.stream = stream;
-    const inflight = this.inflight;
     attempt.io = new ShellIo(stream, {
       promptRegex: this.opts.promptRegex,
       settleMs: this.opts.settleMs,
       idleBufferMaxBytes: this.opts.idleBufferMaxBytes,
       onDead: () => {
-        if (attempt.tornDown) {
-          return;
-        }
-
-        if (this.active === attempt) {
-          this.teardown(attempt);
-        }
+        this.apply(attempt, decideAttempt(this.snapshot(attempt), { type: 'shell-dead' }));
       },
     });
 
     const onChannelGone: ChannelListener = (): void => {
-      if (attempt.tornDown) {
-        return;
-      }
-
-      if (this.inflight?.attempt === attempt && !this.inflight.settled) {
-        this.failInflight(attempt, 'connect', 'channel closed');
-        return;
-      }
-
-      if (this.active === attempt) {
-        this.teardown(attempt);
-      }
+      this.apply(attempt, decideAttempt(this.snapshot(attempt), { type: 'channel-gone' }));
     };
 
     attempt.onChannelGone = onChannelGone;
@@ -318,47 +298,83 @@ export class SshSession {
         this.finishOk(attempt, inflight);
       })
       .catch((error: unknown) => {
-        if (attempt.tornDown || inflight.settled || this.inflight?.attempt !== attempt) {
-          return;
-        }
+        const code =
+          error instanceof SshClientError && (error.code === 'timeout' || error.code === 'invalid')
+            ? error.code
+            : 'connect';
+        const message = error instanceof SshClientError ? error.message : errorMessage(error);
 
-        if (error instanceof SshClientError && (error.code === 'timeout' || error.code === 'invalid')) {
-          this.failInflight(attempt, error.code, error.message);
-          return;
-        }
-
-        this.failInflight(attempt, 'connect', errorMessage(error));
+        this.apply(
+          attempt,
+          decideAttempt(this.snapshot(attempt), { type: 'ready-result', code, message }),
+        );
       });
   }
 
   private onClientError(attempt: ConnectionAttempt, err: unknown): void {
-    if (attempt.tornDown) {
-      return;
-    }
+    const message = errorMessage(err);
 
-    if (this.inflight?.attempt === attempt && !this.inflight.settled) {
-      const message = errorMessage(err);
-      this.failInflight(attempt, classifyConnectError(message), message);
-      return;
-    }
-
-    if (this.active === attempt) {
-      this.teardown(attempt);
-    }
+    this.apply(
+      attempt,
+      decideAttempt(this.snapshot(attempt), {
+        type: 'client-error',
+        code: classifyConnectError(message),
+        message,
+      }),
+    );
   }
 
   private onClientClose(attempt: ConnectionAttempt): void {
-    if (attempt.tornDown) {
+    this.apply(attempt, decideAttempt(this.snapshot(attempt), { type: 'client-close' }));
+  }
+
+  private snapshot(attempt: ConnectionAttempt): AttemptSnapshot {
+    const inflight = this.inflight?.attempt === attempt ? this.inflight : null;
+
+    return {
+      tornDown: attempt.tornDown,
+      isInflight: inflight !== null,
+      inflightSettled: inflight?.settled ?? false,
+      isActive: this.active === attempt,
+    };
+  }
+
+  private apply(attempt: ConnectionAttempt, effect: AttemptEffect, stream?: ShellChannelLike): void {
+    switch (effect.type) {
+      case 'ignore':
+      case 'open-shell':
+      case 'attach-shell':
+        return;
+      case 'close-own-stream':
+        this.closeStream(stream);
+        return;
+      case 'fail':
+        if (effect.closeStream) {
+          this.closeStream(stream);
+        }
+
+        this.failInflight(attempt, effect.code, effect.message);
+        return;
+      case 'teardown':
+        this.teardown(attempt);
+        return;
+      default: {
+        const unreachable: never = effect;
+
+        return unreachable;
+      }
+    }
+  }
+
+  private closeStream(stream: ShellChannelLike | undefined): void {
+    if (!stream) {
       return;
     }
 
-    if (this.inflight?.attempt === attempt && !this.inflight.settled) {
-      this.failInflight(attempt, 'connect', 'channel closed');
-      return;
-    }
-
-    if (this.active === attempt) {
-      this.teardown(attempt);
+    try {
+      stream.close();
+    } catch {
+      /* stale or failed shell */
     }
   }
 
@@ -483,16 +499,4 @@ function errorMessage(err: unknown): string {
   }
 
   return String(err);
-}
-
-function classifyConnectError(message: string): 'connect' | 'auth' | 'timeout' {
-  if (/timed out/i.test(message)) {
-    return 'timeout';
-  }
-
-  if (/auth|password|credential/i.test(message)) {
-    return 'auth';
-  }
-
-  return 'connect';
 }

@@ -1,6 +1,7 @@
 # jooservices/ssh-client
 
 [![CI](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/jooservices/ssh-client/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/jooservices/ssh-client/badge)](https://securityscorecards.dev/viewer/?uri=github.com/jooservices/ssh-client)
 [![Node](https://img.shields.io/badge/Node-24.21-blue.svg)](https://nodejs.org/)
 [![GitHub Release](https://img.shields.io/github/v/release/jooservices/ssh-client?display_name=tag)](https://github.com/jooservices/ssh-client/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
