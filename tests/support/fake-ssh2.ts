@@ -6,7 +6,15 @@ export interface FakeSsh2ClientOptions {
   authFailure?: boolean;
   connectError?: Error;
   shellError?: Error;
+  /** When set with `shellError`, the shell callback receives the channel too. */
+  shellErrorWithStream?: boolean;
+  /** Shell callback is `(undefined, undefined)` — open failed with no error object. */
+  shellMissing?: boolean;
   shellDelayMs?: number;
+  shellImmediate?: boolean;
+  deferShell?: boolean;
+  deferConnect?: boolean;
+  ignoreBareCr?: boolean;
   channel?: FakeSsh2Channel;
   banner?: string;
   initialPrompt?: string;
@@ -29,6 +37,7 @@ export interface FakeCommandScript {
 export interface FakeSsh2ChannelOptions {
   commands?: Record<string, FakeCommandScript>;
   prompt?: string;
+  ignoreBareCr?: boolean;
   onClientClose?: () => void;
 }
 
@@ -63,7 +72,7 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
       return true;
     }
 
-    if (text === '\r' && this.options.prompt) {
+    if (text === '\r' && this.options.prompt && !this.options.ignoreBareCr) {
       this.emitText(this.options.prompt);
       return true;
     }
@@ -84,6 +93,10 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
 
   emitText(text: string): void {
     this.emit('data', Buffer.from(text));
+  }
+
+  emitChunk(chunk: Buffer): void {
+    this.emit('data', chunk);
   }
 
   emitEnd(): void {
@@ -184,6 +197,9 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
   connectConfig: Ssh2ConnectConfig | null = null;
   shellOptions: { term: string; rows: number; cols: number } | null = null;
   ended = false;
+  endCount = 0;
+  private deferredConnect: (() => void) | null = null;
+  private deferredShell: (() => void) | null = null;
 
   constructor(private readonly options: FakeSsh2ClientOptions = {}) {
     super();
@@ -193,6 +209,7 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
         commands: options.commands,
         onClientClose: () => this.emitClose(),
         prompt: options.initialPrompt,
+        ignoreBareCr: options.ignoreBareCr,
       });
   }
 
@@ -207,7 +224,7 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
   connect(config: Ssh2ConnectConfig): this {
     this.connectConfig = config;
 
-    queueMicrotask(() => {
+    const run = (): void => {
       const hostKey = this.options.hostKey ?? Buffer.from('fake-host-key');
 
       if (config.hostVerifier) {
@@ -230,9 +247,26 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
       }
 
       this.emit('ready');
-    });
+    };
+
+    if (this.options.deferConnect) {
+      this.deferredConnect = run;
+      return this;
+    }
+
+    queueMicrotask(run);
 
     return this;
+  }
+
+  releaseConnect(): void {
+    const run = this.deferredConnect;
+    this.deferredConnect = null;
+    run?.();
+  }
+
+  emitClientError(error: Error = new Error('client error')): void {
+    this.emit('error', error);
   }
 
   shell(
@@ -241,9 +275,17 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
   ): void {
     this.shellOptions = options;
     const run = (): void => {
-      callback(this.options.shellError, this.options.shellError ? undefined : this.channel);
+      const stream = this.options.shellError
+        ? this.options.shellErrorWithStream
+          ? this.channel
+          : undefined
+        : this.options.shellMissing
+          ? undefined
+          : this.channel;
 
-      if (!this.options.shellError) {
+      callback(this.options.shellError, stream);
+
+      if (!this.options.shellError && !this.options.shellMissing) {
         const emitPrompt = (): void => {
           this.channel.emitText(`${this.options.banner ?? ''}${this.options.initialPrompt ?? 'router# '}`);
         };
@@ -256,15 +298,32 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
       }
     };
 
+    if (this.options.deferShell) {
+      this.deferredShell = run;
+      return;
+    }
+
     if (this.options.shellDelayMs && this.options.shellDelayMs > 0) {
       setTimeout(run, this.options.shellDelayMs);
+      return;
+    }
+
+    if (this.options.shellImmediate) {
+      run();
       return;
     }
 
     queueMicrotask(run);
   }
 
+  releaseShell(): void {
+    const run = this.deferredShell;
+    this.deferredShell = null;
+    run?.();
+  }
+
   end(): void {
+    this.endCount += 1;
     this.ended = true;
     this.emitClose();
   }

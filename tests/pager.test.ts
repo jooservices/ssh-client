@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SshClientError } from '../src/errors.js';
-import { createPagerState, handlePagerIfNeeded } from '../src/pager.js';
+import { createPagerState, handlePagerIfNeeded, scanPagerText } from '../src/pager.js';
 
 describe('handlePagerIfNeeded', () => {
   it('writes a space, bumps page count, and advances morePos', () => {
@@ -65,5 +65,20 @@ describe('handlePagerIfNeeded', () => {
   it('exports pagerExceededError helper', async () => {
     const { pagerExceededError } = await import('../src/pager.js');
     expect(pagerExceededError(2)).toBeInstanceOf(SshClientError);
+  });
+
+  it('scanPagerText keeps a short suffix so a split marker is handled on the next chunk', () => {
+    const writes: string[] = [];
+    const state = createPagerState();
+    const stream = { write: (data: string) => writes.push(data) };
+    const rest = scanPagerText(`${'x'.repeat(40)}--- MOR`, stream, state, 3);
+
+    expect(writes).toEqual([]);
+    expect(rest.endsWith('--- MOR')).toBe(true);
+
+    scanPagerText(`${rest}E ---`, stream, state, 3);
+
+    expect(writes).toEqual([' ']);
+    expect(state.pages).toBe(1);
   });
 });

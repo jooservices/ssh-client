@@ -51,3 +51,22 @@ export function handlePagerIfNeeded(
 export function pagerExceededError(maxPages: number): SshClientError {
   return new SshClientError('timeout', `pager exceeded maxPages=${maxPages}`);
 }
+
+/**
+ * Scan `text` for pager markers. Returns the unscanned suffix, keeping a short
+ * tail so a marker split across chunks is still visible on the next push.
+ */
+export function scanPagerText(
+  text: string,
+  stream: { write: (data: string) => unknown },
+  state: PagerState,
+  maxPages: number,
+): string {
+  const local: PagerState = { pages: state.pages, morePos: 0, quitSent: state.quitSent };
+  handlePagerIfNeeded(text, stream, local, maxPages);
+  state.pages = local.pages;
+  state.quitSent = local.quitSent;
+  const rest = text.slice(local.morePos);
+
+  return rest.length > 24 ? rest.slice(rest.length - 24) : rest;
+}

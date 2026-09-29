@@ -4,7 +4,6 @@ import { cleanOutput, runCommandOnShell } from '../src/shell-io.js';
 import { FakeSsh2Channel } from './support/fake-ssh2.js';
 
 const prompt = 'router# ';
-const promptRegex = /(?:>|#)\s*$/m;
 
 describe('runCommandOnShell', () => {
   it('writes a CR-terminated command and resolves clean stdout after the prompt settles', async () => {
@@ -120,11 +119,11 @@ describe('runCommandOnShell', () => {
 });
 
 describe('cleanOutput', () => {
-  it('uses a global echo-strip regex so repeated echoed commands are removed', () => {
+  it('removes only the first echo', () => {
     const command = `repeat ${randomUUID()}`;
     const raw = `${command}\r\nvalue one\r\n${command}\r\nvalue two\r\n${prompt}`;
 
-    expect(cleanOutput(raw, command, promptRegex)).toBe('value one\nvalue two');
+    expect(cleanOutput(raw, command, prompt)).toBe(`value one\n${command}\nvalue two`);
   });
 });
 
@@ -133,7 +132,7 @@ function options(overrides: Partial<Parameters<typeof runCommandOnShell>[2]> = {
     commandTimeoutMs: 500,
     maxPages: 4,
     maxOutputBytes: 8_388_608,
-    promptRegex,
+    promptIdentity: prompt,
     settleMs: 0,
     idleBufferMaxBytes: 64 * 1024,
     ...overrides,

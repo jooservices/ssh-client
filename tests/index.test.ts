@@ -17,7 +17,7 @@ describe('public barrel', () => {
       username: 'admin',
     };
     const execOptions: ExecOptions = { maxPages: 2, timeoutMs: 50 };
-    const result: ExecResult = { durationMs: 1, stdout: 'ok' };
+    const result: ExecResult = { durationMs: 1, stdout: 'ok', sendAt: 0, recvAt: 1, connectMs: 0 };
     const code: SshErrorCode = 'invalid';
 
     expect(options.host).toBe('router.local');

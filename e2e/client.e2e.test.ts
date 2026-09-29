@@ -9,7 +9,13 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
   const clients: SshClientInstance[] = [];
 
   beforeAll(async () => {
-    ({ SshClient } = await import('../dist/index.js'));
+    // Non-literal specifier: tsc runs before `dist/` exists. E2E builds first.
+    const distModule = '../dist/index.js';
+    const imported = (await import(distModule)) as unknown as {
+      SshClient: new (options: SshClientOptions) => SshClientInstance;
+    };
+
+    SshClient = imported.SshClient;
   });
 
   afterEach(async () => {
@@ -17,7 +23,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     clients.length = 0;
   });
 
-  it('connects and executes echo without shell echo or prompt junk', async () => {
+  it('e2e default prompt echo', async () => {
     const client = createClient();
 
     await client.connect();
@@ -37,6 +43,27 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     expect(result.stdout).toBe('tester');
   });
 
+  it('e2e whitespace', async () => {
+    const client = createClient();
+    const result = await client.exec("printf '  indented\\n\\n# tag\\n'");
+
+    expect(result.stdout).toBe('  indented\n\n# tag');
+  });
+
+  it('e2e unicode', async () => {
+    const client = createClient();
+    const result = await client.exec("printf 'àé\\n'");
+
+    expect(result.stdout).toBe('àé');
+  });
+
+  it('e2e full-line prompt regex', async () => {
+    const client = createClient({ promptRegex: /^\S+@\S+:\S*\$ $/u });
+    const result = await client.exec('echo regex');
+
+    expect(result.stdout).toBe('regex');
+  });
+
   it('runs two sequential execs on one session', async () => {
     const client = createClient();
 
@@ -47,7 +74,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     expect(second.stdout).toBe('second');
   });
 
-  it('auto-reconnects after disconnect before exec', async () => {
+  it('e2e reconnect after disconnect', async () => {
     const client = createClient();
 
     await client.connect();
@@ -58,7 +85,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     expect(result.connectMs).toBeGreaterThan(0);
   });
 
-  it('rejects host-key mismatch before running commands', async () => {
+  it('e2e bad host key', async () => {
     const client = createClient({ hostFingerprint: 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
 
     await expect(client.connect()).rejects.toMatchObject({
@@ -81,7 +108,6 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
       hostFingerprint: env.hostFingerprint,
       readyTimeoutMs: 10_000,
       commandTimeoutMs: 10_000,
-      promptRegex: /(?:[>#$])\s*$/m,
       ...overrides,
     });
 
