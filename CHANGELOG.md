@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A socket error that arrives after the SSH client is closed no longer becomes an uncaught exception.
+
+### Added
+
+- Local `npm run test:e2e` checks Node `>=24.21.0 <25` and a running Docker daemon before the Ubuntu sshd suite.
+- Docker Ubuntu E2E now covers auth failure, host-key skip, ready and command timeouts, idle timeout, abort, output cap, pager, disconnect barrier, shell exit, and PTY `TERM`.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added
