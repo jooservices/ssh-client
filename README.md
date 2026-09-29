@@ -12,7 +12,7 @@ output is handled automatically.
 
 ## Status
 
-**v1.0.0** — stable interactive-shell SSH client API with host-key pinning.
+**v1.1.0** — interactive-shell SSH client with host-key pinning, attempt isolation, and lossless command output.
 The package stays private (`"private": true`) and is not published to npm;
 consume it from the checkout or a Git tag. See [`CHANGELOG.md`](./CHANGELOG.md).
 

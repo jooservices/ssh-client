@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-29
+
+### Added
+
+- Optional full-line `promptRegex`. When it is omitted, the first ready prompt line is captured and later commands must repeat that exact line.
+- Per-file coverage floor of 85% and a consumer typecheck smoke inside `npm run ci`.
+
+### Fixed
+
+- A client `error` after the session is ready no longer crashes the process. The listener stays until teardown.
+- A stale shell callback or client `close` from an older attempt cannot clear a newer session.
+- `disconnect()` rejects in-flight and already queued `exec` calls with `closed`. A new `exec` may reconnect only after `disconnect()` resolves.
+- `stdout` keeps indentation, blank lines, and leading `#` / `>`. Only the first command echo is removed.
+- UTF-8 characters split across socket chunks stay intact.
+- `readyTimeoutMs` is one budget from `connect()` through handshake, shell open, and the first prompt. An ssh2 handshake timeout is reported as `timeout`.
+- A failed prompt resync closes the session.
+- Invalid `ExecOptions` fail with `invalid` before any connect or write. Ready banners and command output share the `maxOutputBytes` cap.
+
+### Changed
+
+- Command completion no longer treats a line that merely ends with `#` or `>` as the prompt.
+- `exec` still writes one raw line to the interactive shell. It does not return an exit code or a separate stderr stream.
+
 ## [1.0.0] - 2026-09-14
 
 ### Added
