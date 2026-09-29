@@ -41,16 +41,19 @@ Disconnecting twice is safe.
 
 ## Highlights
 
-- **Interactive shell** — commands run on a real shell channel: write
-  `command\r`, read until the prompt (`promptRegex`, default `/(?:>|#)\s*$/m`),
-  strip the echoed command and trailing prompt, and drive the
-  `--- MORE ---` pager (space-scrolled, capped by `maxPages`, default 60).
+- **Interactive shell** — `exec` writes one raw line (`command\r`) on a PTY
+  shell. There is no exit code and no separate stderr. The first ready line
+  that looks like a prompt is captured and later commands must repeat that
+  exact line. `promptRegex`, when set, must match the whole line. Output keeps
+  indentation, blank lines, and leading `#` / `>`. A `--- MORE ---` pager is
+  space-scrolled up to `maxPages` (default 60).
 - **Host-key pinning** — connections fail closed unless `hostFingerprint`
-  (OpenSSH `SHA256:…` or hex form) is pinned and matched; `insecureSkipVerify`
-  is for tests only. `fingerprintSha256()` is exported to compute fingerprints.
-- **Transport hygiene** — command write failures clear waiters; timeout resync
-  does not poison the next command; disconnect during connect stays closed;
-  optional per-command `idleTimeoutMs`.
+  (OpenSSH `SHA256:…` or hex form) is pinned and matched. `insecureSkipVerify`
+  is a lab/test hatch only. `fingerprintSha256()` computes fingerprints.
+- **Transport hygiene** — one ready budget covers handshake, shell open, and
+  the first prompt. Disconnect rejects in-flight and queued `exec` with
+  `closed`. A failed prompt resync closes the session. This library does not
+  enable TCP keepalive and does not narrow ssh2 algorithms.
 
 ## Development
 
@@ -60,7 +63,7 @@ npm install
 npm run lint       # tsc --noEmit
 npm test           # vitest unit tests (fakes only, no live host)
 npm run build      # emit dist/
-npm run ci         # lint + coverage (≥90%) + build
+npm run ci         # lint + test types + coverage (aggregate ≥90%, per file ≥85%) + build + consumer types
 npm run test:e2e   # Docker Ubuntu sshd E2E — requires Docker
 ```
 

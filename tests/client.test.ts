@@ -126,7 +126,7 @@ describe('SshClient', () => {
     expect(client.connected).toBe(false);
   });
 
-  it('auto-reconnects when exec is called after disconnect', async () => {
+  it('exec after disconnect reconnects', async () => {
     const firstCommand = `before disconnect ${randomUUID()}`;
     const secondCommand = `after disconnect ${randomUUID()}`;
     const firstFake = enqueueFake({ commands: { [firstCommand]: { body: `first ${randomUUID()}\n` } } });
@@ -186,7 +186,6 @@ function createClient(overrides: Partial<ConstructorParameters<typeof SshClient>
     host: 'router.local',
     hostFingerprint: fingerprintSha256(hostKey),
     password: 'secret',
-    promptRegex: /(?:>|#)\s*$/m,
     settleMs: 0,
     username: 'admin',
     ...overrides,

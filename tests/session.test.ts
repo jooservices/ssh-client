@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { SshClientError } from '../src/errors.js';
 import { fingerprintSha256 } from '../src/host-key.js';
 import { resolveOptions } from '../src/options.js';
+import type { SshClientOptions } from '../src/public-types.js';
 import { SshSession } from '../src/session.js';
 import { FakeSsh2Client } from './support/fake-ssh2.js';
 
 const hostKey = Buffer.from('session-host-key');
 
-function sessionWith(fake: FakeSsh2Client, overrides: Parameters<typeof resolveOptions>[0] = {}): SshSession {
+function sessionWith(fake: FakeSsh2Client, overrides: Partial<SshClientOptions> = {}): SshSession {
   const opts = resolveOptions({
-    host: 'router.local',
-    username: 'admin',
-    password: 'secret',
-    hostFingerprint: fingerprintSha256(hostKey),
     ...overrides,
+    host: overrides.host ?? 'router.local',
+    username: overrides.username ?? 'admin',
+    password: overrides.password ?? 'secret',
+    hostFingerprint: Object.hasOwn(overrides, 'hostFingerprint')
+      ? overrides.hostFingerprint
+      : fingerprintSha256(hostKey),
   });
 
   return new SshSession(opts, () => fake);

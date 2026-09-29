@@ -1,6 +1,8 @@
 import { SshClientError } from './errors.js';
-import type { ResolvedOptions } from './options.js';
-import { createPagerState, handlePagerIfNeeded, type PagerState } from './pager.js';
+import { cleanOutput, OutputAccumulator } from './output-accumulator.js';
+import { DEFAULTS, RESYNC_TIMEOUT_MS, type ResolvedOptions } from './options.js';
+import { createPagerState, pagerExceededError, scanPagerText, type PagerState } from './pager.js';
+import { isPromptLine, looksLikeReadyPrompt, normalizePromptRegex } from './prompt.js';
 
 export interface ShellStream {
   write: (data: string | Buffer) => unknown;
@@ -11,18 +13,19 @@ export interface ShellStream {
 }
 
 export interface PromptWaitOptions {
-  promptRegex: RegExp;
+  promptRegex?: RegExp | null;
+  promptIdentity?: string | null;
   settleMs: number;
   timeoutMs: number;
   timeoutMessage: string;
   readyPoke?: boolean;
+  maxOutputBytes: number;
 }
 
 type WaitMode = 'ready' | 'command' | 'resync';
 
 interface Waiter {
   mode: WaitMode;
-  start: number;
   pager: PagerState;
   maxPages: number;
   maxOutputBytes: number;
@@ -32,76 +35,90 @@ interface Waiter {
   pokeTimer: ReturnType<typeof setTimeout> | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
+  generation: number;
+  settled: boolean;
   resolve: (value: string) => void;
   reject: (reason: Error) => void;
   onAbort?: () => void;
   signal?: AbortSignal;
 }
 
+export interface ShellIoOptions {
+  promptRegex?: RegExp | null;
+  promptIdentity?: string | null;
+  settleMs: number;
+  idleBufferMaxBytes: number;
+  onDead?: () => void;
+}
+
 /**
- * Persistent interactive-shell I/O: one data listener, idle buffer trim,
- * pager handling, timeout resync.
+ * Persistent interactive-shell I/O: one data listener, incremental buffer,
+ * pager handling, and a single settlement path per waiter.
  */
 export class ShellIo {
-  private parts: string[] = [];
-  private partsBytes = 0;
+  private readonly accumulator = new OutputAccumulator();
+  private unscanned = '';
   private waiter: Waiter | null = null;
   private generation = 0;
-  private readonly promptRegex: RegExp;
+  private detached = false;
+  private promptIdentity: string | null;
+  private readonly promptRegex: RegExp | null;
   private readonly settleMs: number;
   private readonly idleBufferMaxBytes: number;
+  private readonly onDead?: () => void;
 
   constructor(
     private readonly stream: ShellStream,
-    opts: Pick<ResolvedOptions, 'promptRegex' | 'settleMs' | 'idleBufferMaxBytes'>,
+    opts: ShellIoOptions,
   ) {
-    this.promptRegex = normalizePromptRegex(opts.promptRegex);
+    this.promptRegex = opts.promptRegex ? normalizePromptRegex(opts.promptRegex) : null;
+    this.promptIdentity = opts.promptIdentity ?? null;
     this.settleMs = opts.settleMs;
     this.idleBufferMaxBytes = opts.idleBufferMaxBytes;
+    this.onDead = opts.onDead;
     this.stream.on('data', this.onData);
     this.stream.on('close', this.onClosed);
     this.stream.on('end', this.onClosed);
     this.stream.on('error', this.onClosed);
   }
 
-  private get buf(): string {
-    return this.parts.join('');
-  }
-
-  private setBuf(value: string): void {
-    this.parts = value.length > 0 ? [value] : [];
-    this.partsBytes = Buffer.byteLength(value, 'utf8');
-  }
-
-  private appendBuf(chunk: string): void {
-    this.parts.push(chunk);
-    this.partsBytes += Buffer.byteLength(chunk, 'utf8');
-  }
-
-  private clearBuf(): void {
-    this.parts = [];
-    this.partsBytes = 0;
+  get capturedPrompt(): string | null {
+    return this.promptIdentity;
   }
 
   detach(): void {
+    if (this.detached) {
+      return;
+    }
+
+    this.detached = true;
     this.stream.removeListener('data', this.onData);
     this.stream.removeListener('close', this.onClosed);
     this.stream.removeListener('end', this.onClosed);
     this.stream.removeListener('error', this.onClosed);
-    const w = this.waiter;
-    this.clearWaiter();
-    if (w) {
-      w.reject(new SshClientError('closed', 'channel closed'));
+    const waiter = this.waiter;
+    this.waiter = null;
+
+    if (waiter && !waiter.settled) {
+      waiter.settled = true;
+      this.clearTimers(waiter);
+      waiter.reject(new SshClientError('closed', 'channel closed'));
     }
-    this.clearBuf();
+
+    this.accumulator.clear();
+    this.unscanned = '';
   }
 
   waitForReady(options: PromptWaitOptions): Promise<string> {
+    if (options.promptIdentity) {
+      this.promptIdentity = options.promptIdentity;
+    }
+
     return this.beginWait({
       mode: 'ready',
       command: '',
       maxPages: 1,
-      maxOutputBytes: Number.MAX_SAFE_INTEGER,
+      maxOutputBytes: options.maxOutputBytes,
       timeoutMs: options.timeoutMs,
       timeoutMessage: options.timeoutMessage,
       readyPoke: options.readyPoke === true,
@@ -130,15 +147,21 @@ export class ShellIo {
       return Promise.reject(new SshClientError('closed', 'aborted'));
     }
 
-    // Drop best-effort resync waiters so the next command can proceed.
     if (this.waiter?.mode === 'resync') {
-      this.clearWaiter();
-      this.clearBuf();
+      const resyncWaiter = this.waiter;
+      this.finishWaiter(resyncWaiter, () => {
+        resyncWaiter.resolve('');
+      });
+      this.accumulator.clear();
+      this.unscanned = '';
     }
 
     if (this.waiter) {
       return Promise.reject(new SshClientError('invalid', 'another command is in flight'));
     }
+
+    this.accumulator.clear();
+    this.unscanned = '';
 
     const promise = this.beginWait({
       mode: 'command',
@@ -154,12 +177,10 @@ export class ShellIo {
 
     try {
       this.stream.write(`${command}\r`);
-    } catch (err) {
-      this.failWaiter(
-        err instanceof Error ? err : new SshClientError('closed', String(err)),
-        false,
-      );
+    } catch (error) {
+      this.failWaiter(asClosedError(error), false);
     }
+
     return promise;
   }
 
@@ -181,15 +202,12 @@ export class ShellIo {
         return;
       }
 
+      const generation = ++this.generation;
       const onAbort = (): void => {
-        this.failWaiter(new SshClientError('closed', 'aborted'), true);
+        this.failWaiter(new SshClientError('closed', 'aborted'), args.mode === 'command');
       };
-
-      const gen = ++this.generation;
-      const idleTimeoutMs = args.idleTimeoutMs ?? 0;
       const waiter: Waiter = {
         mode: args.mode,
-        start: this.buf.length,
         pager: createPagerState(),
         maxPages: args.maxPages,
         maxOutputBytes: args.maxOutputBytes,
@@ -197,16 +215,19 @@ export class ShellIo {
         settleTimer: null,
         pokeTimer: null,
         idleTimer: null,
-        idleTimeoutMs,
+        idleTimeoutMs: args.idleTimeoutMs ?? 0,
+        generation,
+        settled: false,
         signal: args.signal,
         onAbort,
         timer: setTimeout(() => {
-          if (this.generation !== gen) return;
+          if (this.waiter !== waiter || waiter.generation !== generation) {
+            return;
+          }
+
           this.failWaiter(new SshClientError('timeout', args.timeoutMessage), args.mode === 'command');
         }, args.timeoutMs),
         resolve: (value) => {
-          this.clearWaiter();
-          this.clearBuf();
           resolve(value);
         },
         reject: (reason) => {
@@ -220,147 +241,220 @@ export class ShellIo {
 
       if (args.readyPoke) {
         waiter.pokeTimer = setTimeout(() => {
-          if (this.waiter !== waiter) return;
+          if (this.waiter !== waiter) {
+            return;
+          }
+
           try {
             this.stream.write('\r');
           } catch {
-            /* ignore */
+            /* poke is best-effort */
           }
-        }, Math.min(500, Math.floor(args.timeoutMs / 4)));
+        }, Math.min(500, Math.max(0, Math.floor(args.timeoutMs / 4))));
       }
 
-      queueMicrotask(() => this.evaluateWaiter());
+      queueMicrotask(() => {
+        this.evaluateWaiter();
+      });
     });
   }
 
-  private armIdleTimer(w: Waiter): void {
-    if (w.idleTimer) clearTimeout(w.idleTimer);
-    if (w.mode !== 'command' || w.idleTimeoutMs <= 0) {
-      w.idleTimer = null;
+  private armIdleTimer(waiter: Waiter): void {
+    if (waiter.idleTimer) {
+      clearTimeout(waiter.idleTimer);
+    }
+
+    if (waiter.mode !== 'command' || waiter.idleTimeoutMs <= 0) {
+      waiter.idleTimer = null;
       return;
     }
-    w.idleTimer = setTimeout(() => {
-      if (this.waiter !== w) return;
+
+    waiter.idleTimer = setTimeout(() => {
+      if (this.waiter !== waiter) {
+        return;
+      }
+
       this.failWaiter(
-        new SshClientError('timeout', `idle timeout after ${w.idleTimeoutMs}ms with no output`),
+        new SshClientError('timeout', `idle timeout after ${waiter.idleTimeoutMs}ms with no output`),
         true,
       );
-    }, w.idleTimeoutMs);
+    }, waiter.idleTimeoutMs);
   }
 
   private failWaiter(err: Error, resync: boolean): void {
-    const w = this.waiter;
-    if (!w) return;
-    const wasPaging = w.pager.pages > 0 || w.pager.quitSent;
-    this.clearWaiter();
-    if (resync) {
+    const waiter = this.waiter;
+
+    if (!waiter || waiter.settled) {
+      return;
+    }
+
+    const wasPaging = waiter.pager.pages > 0 || waiter.pager.quitSent;
+    const mode = waiter.mode;
+    this.finishWaiter(waiter, () => {
+      waiter.reject(err);
+    });
+
+    if (resync && mode === 'command') {
       this.resync(wasPaging);
     }
-    w.reject(err);
   }
 
-  private clearWaiter(): void {
-    const w = this.waiter;
-    this.waiter = null;
-    if (!w) return;
-    clearTimeout(w.timer);
-    if (w.settleTimer) clearTimeout(w.settleTimer);
-    if (w.pokeTimer) clearTimeout(w.pokeTimer);
-    if (w.idleTimer) clearTimeout(w.idleTimer);
-    if (w.onAbort && w.signal) {
-      w.signal.removeEventListener('abort', w.onAbort);
+  private finishWaiter(waiter: Waiter, settle: () => void): void {
+    if (waiter.settled) {
+      return;
+    }
+
+    waiter.settled = true;
+    this.clearTimers(waiter);
+
+    if (this.waiter === waiter) {
+      this.waiter = null;
+    }
+
+    settle();
+  }
+
+  private clearTimers(waiter: Waiter): void {
+    clearTimeout(waiter.timer);
+
+    if (waiter.settleTimer) {
+      clearTimeout(waiter.settleTimer);
+    }
+
+    if (waiter.pokeTimer) {
+      clearTimeout(waiter.pokeTimer);
+    }
+
+    if (waiter.idleTimer) {
+      clearTimeout(waiter.idleTimer);
+    }
+
+    if (waiter.onAbort && waiter.signal) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
     }
   }
 
   private readonly onData = (chunk: Buffer): void => {
-    this.appendBuf(chunk.toString('utf8'));
-    if (this.waiter) {
-      this.armIdleTimer(this.waiter);
-    }
+    const decoded = this.accumulator.push(chunk);
+    this.unscanned += decoded;
+
     if (!this.waiter) {
-      this.trimIdleBuffer();
+      this.accumulator.trimToMaxBytes(this.idleBufferMaxBytes);
+      this.unscanned = '';
       return;
     }
+
+    this.armIdleTimer(this.waiter);
     this.evaluateWaiter();
   };
 
   private evaluateWaiter(): void {
-    const w = this.waiter;
-    if (!w) return;
+    const waiter = this.waiter;
 
-    const segment = this.buf.slice(w.start);
+    if (!waiter || waiter.settled) {
+      return;
+    }
 
-    if (w.mode === 'command' && Buffer.byteLength(segment, 'utf8') > w.maxOutputBytes) {
+    if (this.accumulator.byteLength > waiter.maxOutputBytes) {
       this.failWaiter(
-        new SshClientError('invalid', `command output exceeded maxOutputBytes=${w.maxOutputBytes}`),
-        true,
+        new SshClientError('invalid', `command output exceeded maxOutputBytes=${waiter.maxOutputBytes}`),
+        false,
       );
+      this.accumulator.clear();
+      this.unscanned = '';
+      this.die();
       return;
     }
 
-    if (w.mode === 'command') {
-      const pagesBefore = w.pager.pages;
-      const quitBefore = w.pager.quitSent;
-      handlePagerIfNeeded(segment, this.stream, w.pager, w.maxPages);
-      // If we keyed the pager, re-evaluate on next tick after fake/remote responds.
-      if (w.pager.pages !== pagesBefore || w.pager.quitSent !== quitBefore) {
-        queueMicrotask(() => this.evaluateWaiter());
+    if (waiter.mode === 'command') {
+      try {
+        this.unscanned = scanPagerText(this.unscanned, this.stream, waiter.pager, waiter.maxPages);
+      } catch (error) {
+        this.failWaiter(asClosedError(error), false);
+        this.die();
+        return;
+      }
+
+      if (waiter.settled || this.waiter !== waiter) {
+        return;
       }
     }
 
-    if (!matchesPromptTail(segment, this.promptRegex)) {
+    const line = this.accumulator.currentLine();
+
+    if (!this.lineIsPrompt(line, waiter.mode)) {
       return;
     }
 
-    if (w.settleTimer) clearTimeout(w.settleTimer);
-    const settleGen = this.generation;
-    w.settleTimer = setTimeout(() => {
-      if (this.waiter !== w || this.generation !== settleGen) return;
+    if (waiter.settleTimer) {
+      clearTimeout(waiter.settleTimer);
+    }
 
-      // Re-read buffer so late chunks arriving during settleMs are included.
-      const current = this.buf.slice(w.start);
-      if (!matchesPromptTail(current, this.promptRegex)) {
+    const generation = waiter.generation;
+    waiter.settleTimer = setTimeout(() => {
+      if (this.waiter !== waiter || waiter.generation !== generation || waiter.settled) {
         return;
       }
 
-      if (w.mode === 'resync') {
-        this.clearWaiter();
-        this.clearBuf();
-        w.resolve('');
+      const current = this.accumulator.currentLine();
+
+      if (!this.lineIsPrompt(current, waiter.mode)) {
         return;
       }
 
-      if (w.mode === 'ready') {
-        w.resolve(current);
+      if (waiter.mode === 'resync') {
+        this.accumulator.clear();
+        this.unscanned = '';
+        this.finishWaiter(waiter, () => {
+          waiter.resolve('');
+        });
         return;
       }
 
-      const out = cleanOutput(current, w.command, this.promptRegex);
-      if (w.pager.quitSent && w.pager.pages >= w.maxPages) {
-        this.failWaiter(new SshClientError('timeout', `pager exceeded maxPages=${w.maxPages}`), false);
-        this.clearBuf();
+      if (waiter.mode === 'ready') {
+        this.promptIdentity = current;
+        const banner = this.accumulator.snapshot();
+        this.accumulator.clear();
+        this.unscanned = '';
+        this.finishWaiter(waiter, () => {
+          waiter.resolve(banner);
+        });
         return;
       }
-      w.resolve(out);
+
+      if (waiter.pager.quitSent && waiter.pager.pages >= waiter.maxPages) {
+        this.failWaiter(pagerExceededError(waiter.maxPages), false);
+        this.accumulator.clear();
+        this.unscanned = '';
+        return;
+      }
+
+      const raw = this.accumulator.snapshot();
+      const output = cleanOutput(raw, waiter.command, current);
+      this.accumulator.clear();
+      this.unscanned = '';
+      this.finishWaiter(waiter, () => {
+        waiter.resolve(output);
+      });
     }, this.settleMs);
   }
 
-  private trimIdleBuffer(): void {
-    if (this.partsBytes <= this.idleBufferMaxBytes) {
-      return;
+  private lineIsPrompt(line: string, mode: WaitMode): boolean {
+    if (mode === 'ready' && !this.promptRegex) {
+      return looksLikeReadyPrompt(line);
     }
-    let joined = this.buf;
-    while (Buffer.byteLength(joined, 'utf8') > this.idleBufferMaxBytes && joined.length > 0) {
-      joined = joined.slice(Math.floor(joined.length / 2));
-    }
-    this.setBuf(joined);
+
+    return isPromptLine(line, this.promptIdentity, this.promptRegex);
   }
 
   private resync(wasPaging: boolean): void {
-    this.clearBuf();
+    this.accumulator.clear();
+    this.unscanned = '';
+
     try {
       this.stream.write(wasPaging ? 'q' : '\r');
     } catch {
+      this.die();
       return;
     }
 
@@ -368,111 +462,81 @@ export class ShellIo {
       mode: 'resync',
       command: '',
       maxPages: 1,
-      maxOutputBytes: Number.MAX_SAFE_INTEGER,
-      timeoutMs: 5_000,
+      maxOutputBytes: DEFAULTS.maxOutputBytes,
+      timeoutMs: RESYNC_TIMEOUT_MS,
       timeoutMessage: 'resync timed out',
       settleMs: this.settleMs,
     }).catch(() => {
-      /* best-effort */
+      this.die();
     });
   }
 
-  private readonly onClosed = (err?: unknown): void => {
-    const w = this.waiter;
-    this.clearWaiter();
-    if (w) {
-      w.reject(new SshClientError('closed', closedMessage(err)));
+  private die(): void {
+    if (this.detached) {
+      return;
     }
+
+    this.onDead?.();
+  }
+
+  private readonly onClosed = (err?: unknown): void => {
+    if (!this.waiter || this.waiter.settled) {
+      return;
+    }
+
+    this.failWaiter(new SshClientError('closed', closedMessage(err)), false);
   };
 }
 
-/** Standalone wait used by unit tests that do not construct ShellIo. */
 export function waitForPrompt(stream: ShellStream, opts: PromptWaitOptions): Promise<string> {
   const io = new ShellIo(stream, {
     promptRegex: opts.promptRegex,
+    promptIdentity: opts.promptIdentity,
     settleMs: opts.settleMs,
     idleBufferMaxBytes: 64 * 1024,
   });
-  return io
-    .waitForReady({
-      promptRegex: opts.promptRegex,
-      settleMs: opts.settleMs,
-      timeoutMs: opts.timeoutMs,
-      timeoutMessage: opts.timeoutMessage,
-      readyPoke: opts.readyPoke,
-    })
-    .finally(() => io.detach());
+
+  return io.waitForReady(opts).finally(() => {
+    io.detach();
+  });
 }
 
 export function runCommandOnShell(
   stream: ShellStream,
   command: string,
-  opts: Pick<
-    ResolvedOptions,
-    'promptRegex' | 'settleMs' | 'commandTimeoutMs' | 'maxPages' | 'maxOutputBytes' | 'idleBufferMaxBytes'
-  >,
+  opts: ShellIoOptions &
+    Pick<ResolvedOptions, 'commandTimeoutMs' | 'maxPages' | 'maxOutputBytes'>,
   overrides?: { timeoutMs?: number; signal?: AbortSignal; maxPages?: number; maxOutputBytes?: number },
 ): Promise<string> {
   const io = new ShellIo(stream, opts);
-  return io.runCommand(command, opts, overrides).finally(() => io.detach());
+
+  return io.runCommand(command, opts, overrides).finally(() => {
+    io.detach();
+  });
 }
 
-export function cleanOutput(raw: string, command: string, promptRegex: RegExp = /(?:>|#)\s*$/m): string {
-  const echoStrip = /^\s*(?:>|#)\s*/;
-  let output = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  output = output.replace(/-{3}\s*MORE\s*-{3}/gi, '');
+export { cleanOutput } from './output-accumulator.js';
 
-  if (command) {
-    output = output.replace(echoRegex(command), '');
+function asClosedError(error: unknown): Error {
+  if (error instanceof SshClientError) {
+    return error;
   }
 
-  const lines: string[] = [];
-  for (const line of output.split('\n')) {
-    const trimmed = line.replace(echoStrip, '').trimEnd();
-    if (trimmed.trim() === '') continue;
-    lines.push(trimmed);
+  if (error instanceof Error) {
+    return new SshClientError('closed', error.message);
   }
 
-  while (lines.length > 0) {
-    const last = lines[lines.length - 1];
-    if (last === undefined) break;
-    if (matchesPromptTail(last, promptRegex)) {
-      lines.pop();
-      continue;
-    }
-    break;
-  }
-
-  return lines.join('\n').trim();
-}
-
-function echoRegex(command: string): RegExp {
-  return new RegExp(`^\\s*(?:>|#)?\\s*${escapeRegex(command)}\\s*(?:\\n|$)`, 'gmu');
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-export function matchesPromptTail(buffer: string, promptRegex: RegExp): boolean {
-  const tail = buffer.slice(buffer.lastIndexOf('\n') + 1);
-  promptRegex.lastIndex = 0;
-  return promptRegex.test(tail);
-}
-
-function normalizePromptRegex(promptRegex: RegExp): RegExp {
-  if (!promptRegex.flags.includes('g')) {
-    return promptRegex;
-  }
-  return new RegExp(promptRegex.source, promptRegex.flags.replaceAll('g', ''));
+  return new SshClientError('closed', String(error));
 }
 
 function closedMessage(err: unknown): string {
   if (err instanceof Error) {
     return err.message;
   }
+
   if (typeof err === 'string' && err.trim() !== '') {
     return err;
   }
+
   return 'channel closed';
 }

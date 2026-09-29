@@ -20,9 +20,11 @@
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage && node tools/check-per-file-coverage.mjs",
+    "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+    "test:consumer": "node tools/consumer-smoke.mjs",
     "test:e2e": "bash tools/e2e.sh",
-    "ci": "npm run lint && npm run test:coverage && npm run build"
+    "ci": "npm run lint && npm run typecheck:tests && npm run test:coverage && npm run build && npm run test:consumer"
   },
   "dependencies": {
     "ssh2": "^1.16.0"

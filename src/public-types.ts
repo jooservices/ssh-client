@@ -10,6 +10,11 @@ export interface SshClientOptions {
   maxPages?: number;
   maxOutputBytes?: number;
   settleMs?: number;
+  /**
+   * Optional full-line prompt matcher for hosts whose prompt changes.
+   * A match counts only when it covers the entire current line.
+   * When omitted, the line captured at the first ready prompt is matched exactly.
+   */
   promptRegex?: RegExp;
   /** PTY term type for interactive shell (default `vt100`). */
   term?: string;
@@ -36,7 +41,7 @@ export interface ExecResult {
   durationMs: number;
   /** Epoch ms when the command was written to the shell. */
   sendAt: number;
-  /** Epoch ms when the response settled (or the attempt failed). */
+  /** Epoch ms when the response settled. Failures reject and do not carry this field. */
   recvAt: number;
   /** Ms spent connecting/reconnecting before this command (0 if already up). */
   connectMs: number;

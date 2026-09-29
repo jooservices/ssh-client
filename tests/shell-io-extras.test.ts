@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { SshClientError } from '../src/errors.js';
 import { ShellIo, waitForPrompt } from '../src/shell-io.js';
 import { FakeSsh2Channel } from './support/fake-ssh2.js';
 
 const prompt = 'router# ';
-const promptRegex = /(?:>|#)\s*$/m;
 
 describe('ShellIo extras', () => {
   it('trims the idle buffer between commands', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, {
-      promptRegex,
+      promptIdentity: prompt,
       settleMs: 0,
       idleBufferMaxBytes: 32,
     });
@@ -33,7 +33,7 @@ describe('ShellIo extras', () => {
 
   it('sends q when maxPages is exceeded and still drains to the prompt', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const command = `page ${randomUUID()}`;
 
     const run = io.runCommand(
@@ -41,7 +41,9 @@ describe('ShellIo extras', () => {
       { commandTimeoutMs: 300, maxPages: 0, maxOutputBytes: 1_000_000, settleMs: 0 },
       { maxPages: 0 },
     );
-    await new Promise((r) => queueMicrotask(r));
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
     channel.emitText(`${command}\r\nline\n--- MORE ---`);
     expect(channel.writes).toContain('q');
     channel.emitText(`rest\n${prompt}`);
@@ -52,7 +54,7 @@ describe('ShellIo extras', () => {
 
   it('resyncs after timeout so a later command can run', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const stuck = `stuck ${randomUUID()}`;
 
     await expect(
@@ -81,11 +83,12 @@ describe('ShellIo extras', () => {
   it('waitForPrompt readyPoke writes CR when prompt is delayed', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const pending = waitForPrompt(channel, {
-      promptRegex,
+      promptIdentity: prompt,
       settleMs: 0,
       timeoutMs: 300,
       timeoutMessage: 'ready timeout',
       readyPoke: true,
+      maxOutputBytes: 1_000_000,
     });
 
     await new Promise((r) => setTimeout(r, 100));
@@ -97,7 +100,7 @@ describe('ShellIo extras', () => {
   it('normalizes global prompt regex and cleans MORE banners', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, {
-      promptRegex: /(?:>|#)\s*$/gm,
+      promptRegex: /^router# $/gm,
       settleMs: 0,
       idleBufferMaxBytes: 64_000,
     });
@@ -115,7 +118,7 @@ describe('ShellIo extras', () => {
 
   it('rejects when the channel closes mid-command with a string reason', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const command = `die ${randomUUID()}`;
     const run = io.runCommand(command, {
       commandTimeoutMs: 500,
@@ -130,7 +133,7 @@ describe('ShellIo extras', () => {
 
   it('rejects when the channel closes mid-command with an Error reason', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const command = `die-err ${randomUUID()}`;
     const run = io.runCommand(command, {
       commandTimeoutMs: 500,
@@ -145,7 +148,7 @@ describe('ShellIo extras', () => {
 
   it('swallows resync write failures without rejecting later commands', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const stuck = `stuck-write ${randomUUID()}`;
     const originalWrite = channel.write.bind(channel);
     channel.write = (data: string | Buffer) => {
@@ -179,7 +182,7 @@ describe('ShellIo extras', () => {
 
   it('fails the waiter when the command write itself throws', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const originalWrite = channel.write.bind(channel);
     channel.write = () => {
       throw new Error('boom');
@@ -208,7 +211,7 @@ describe('ShellIo extras', () => {
 
   it('enforces idleTimeoutMs when no output arrives', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     await expect(
       io.runCommand(`idle ${randomUUID()}`, {
         commandTimeoutMs: 5_000,
@@ -222,7 +225,7 @@ describe('ShellIo extras', () => {
 
   it('includes late output chunks that arrive during settleMs', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 40, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 40, idleBufferMaxBytes: 64_000 });
     const command = `late ${randomUUID()}`;
     const run = io.runCommand(command, {
       commandTimeoutMs: 500,
@@ -239,7 +242,7 @@ describe('ShellIo extras', () => {
 
   it('rejects when AbortSignal fires and when maxOutputBytes is exceeded', async () => {
     const channel = new FakeSsh2Channel({ prompt });
-    const io = new ShellIo(channel, { promptRegex, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
     const ac = new AbortController();
     const aborted = io.runCommand(
       `abort ${randomUUID()}`,
@@ -256,5 +259,159 @@ describe('ShellIo extras', () => {
     channel.emitText(`${'x'.repeat(64)}\n`);
     await expect(big).rejects.toMatchObject({ code: 'invalid', message: /maxOutputBytes/ });
     io.detach();
+  });
+
+  it('rejects a command whose signal is already aborted', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const controller = new AbortController();
+
+    controller.abort();
+    await expect(
+      io.runCommand(
+        `gone ${randomUUID()}`,
+        { commandTimeoutMs: 200, maxPages: 2, maxOutputBytes: 1_000_000, settleMs: 0 },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ code: 'closed', message: 'aborted' });
+    expect(io.capturedPrompt).toBe(prompt);
+    io.detach();
+    io.detach();
+  });
+
+  it('rejects ready wait while a command is in flight', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const command = `busy ${randomUUID()}`;
+    const pending = io.runCommand(command, {
+      commandTimeoutMs: 500,
+      maxPages: 2,
+      maxOutputBytes: 1_000_000,
+      settleMs: 0,
+    });
+
+    await expect(
+      io.waitForReady({
+        settleMs: 0,
+        timeoutMs: 500,
+        timeoutMessage: 'ready prompt timed out',
+        maxOutputBytes: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid', message: /another command is in flight/u });
+    channel.emitText(`${command}\r\nok\n${prompt}`);
+    await expect(pending).resolves.toContain('ok');
+    io.detach();
+  });
+
+  it('cancels an in-flight resync when the next command starts', async () => {
+    const channel = new FakeSsh2Channel({ prompt, ignoreBareCr: true });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const stuck = `stuck ${randomUUID()}`;
+
+    await expect(
+      io.runCommand(stuck, {
+        commandTimeoutMs: 20,
+        maxPages: 2,
+        maxOutputBytes: 1_000_000,
+        settleMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'timeout' });
+
+    const next = `next ${randomUUID()}`;
+    const run = io.runCommand(next, {
+      commandTimeoutMs: 200,
+      maxPages: 2,
+      maxOutputBytes: 1_000_000,
+      settleMs: 0,
+    });
+
+    channel.emitText(`${next}\r\nok\n${prompt}`);
+    await expect(run).resolves.toContain('ok');
+    io.detach();
+  });
+
+  it('rearms the idle timer when another chunk arrives', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const command = `idle-chunk ${randomUUID()}`;
+    const pending = io.runCommand(
+      command,
+      { commandTimeoutMs: 500, maxPages: 2, maxOutputBytes: 1_000_000, settleMs: 0 },
+      { idleTimeoutMs: 5_000 },
+    );
+
+    channel.emitText('partial');
+    channel.emitText(`${command}\r\nok\n${prompt}`);
+    await expect(pending).resolves.toContain('ok');
+    io.detach();
+  });
+
+  it('does not settle when the line changes before settleMs', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 40, idleBufferMaxBytes: 64_000 });
+    const command = `shift ${randomUUID()}`;
+    const run = io.runCommand(command, {
+      commandTimeoutMs: 500,
+      maxPages: 2,
+      maxOutputBytes: 1_000_000,
+      settleMs: 40,
+    });
+
+    channel.emitText(`${command}\r\nvalue\n${prompt}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    channel.emitText('extra');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    channel.emitText(`\n${prompt}`);
+    await expect(run).resolves.toContain('value');
+    io.detach();
+  });
+
+  it('maps a thrown string and an SshClientError from write to closed', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const limits = { commandTimeoutMs: 200, maxPages: 2, maxOutputBytes: 1_000_000, settleMs: 0 };
+
+    channel.write = () => {
+      throw 'nope';
+    };
+    await expect(io.runCommand(`str ${randomUUID()}`, limits)).rejects.toMatchObject({
+      code: 'closed',
+      message: 'nope',
+    });
+
+    channel.write = () => {
+      throw new SshClientError('closed', 'already');
+    };
+    await expect(io.runCommand(`typed ${randomUUID()}`, limits)).rejects.toMatchObject({
+      code: 'closed',
+      message: 'already',
+    });
+    io.detach();
+  });
+
+  it('ready poke does not write after the prompt already settled', async () => {
+    vi.useFakeTimers();
+
+    try {
+      const channel = new FakeSsh2Channel({ prompt });
+      const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+      const pending = io.waitForReady({
+        settleMs: 0,
+        timeoutMs: 4_000,
+        timeoutMessage: 'ready prompt timed out',
+        readyPoke: true,
+        maxOutputBytes: 1_000_000,
+      });
+
+      channel.emitText(prompt);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(pending).resolves.toContain(prompt);
+      expect(io.capturedPrompt).toBe(prompt);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(channel.writes).not.toContain('\r');
+      io.detach();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
