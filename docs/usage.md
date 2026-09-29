@@ -247,13 +247,22 @@ On success it prints the `exec` result JSON; on failure it prints the
 ## Docker Ubuntu E2E
 
 ```bash
-npm run test:e2e   # requires Docker, OpenSSH client tools, openssl
+# Node >=24.21.0 <25, a running Docker daemon, ssh-keyscan, ssh-keygen, openssl
+npm run test:e2e
 ```
 
-`tools/e2e.sh` builds the package, builds `docker/Dockerfile` (Ubuntu 24.04 +
-`sshd`, user `tester`), starts a throwaway container on a random loopback port
-with a generated password, captures the host fingerprint via `ssh-keyscan` +
-`ssh-keygen`, exports the `SSH_*` environment, and runs
-`vitest --config vitest.e2e.config.ts` over `e2e/`. The container is removed on
-exit. E2E specs never run under `npm test`/`npm run ci`; GitHub Actions runs
-them in a separate `e2e` job on the Node CI workflow.
+`tools/e2e.sh` is the local runner and the CI `e2e` job. It checks the Node
+engine and that Docker is running, builds the package, builds
+`docker/Dockerfile` (Ubuntu 24.04 + `sshd`, user `tester`), starts a throwaway
+container on a random loopback port with a generated password, captures the
+host fingerprint via `ssh-keyscan` + `ssh-keygen`, exports the `SSH_*`
+environment, and runs `vitest --config vitest.e2e.config.ts` over `e2e/`. The
+container is removed on exit. E2E specs never run under `npm test` or
+`npm run ci`.
+
+Against that Ubuntu sshd the suite covers prompt identity, full-line
+`promptRegex`, whitespace, UTF-8, a bare CR, PTY `TERM`, queued and in-flight
+`disconnect`, reconnect, shell `exit`, wrong password, a bad host key,
+`insecureSkipVerify`, a missed prompt, the ready budget, command timeout, idle
+timeout, abort, `maxOutputBytes`, and the `--- MORE ---` pager. Empty commands
+and invalid `ExecOptions` are rejected in the same run before any connect.

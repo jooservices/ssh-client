@@ -65,7 +65,7 @@ npm run lint       # tsc --noEmit
 npm test           # vitest unit tests (fakes only, no live host)
 npm run build      # emit dist/
 npm run ci         # lint + test types + coverage (aggregate ≥90%, per file ≥85%) + build + consumer types
-npm run test:e2e   # Docker Ubuntu sshd E2E — requires Docker
+npm run test:e2e   # local and CI Docker Ubuntu sshd E2E — Docker daemon, OpenSSH client, openssl, Node 24.21
 ```
 
 Full embedder + operator guide: [`docs/usage.md`](./docs/usage.md).
