@@ -9,7 +9,9 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
   const clients: SshClientInstance[] = [];
 
   beforeAll(async () => {
-    const imported = (await import('../dist/index.js')) as unknown as {
+    // Non-literal specifier: tsc runs before `dist/` exists. E2E builds first.
+    const distModule = '../dist/index.js';
+    const imported = (await import(distModule)) as unknown as {
       SshClient: new (options: SshClientOptions) => SshClientInstance;
     };
 
