@@ -411,4 +411,27 @@ describe('SshSession races', () => {
     });
     expect(session.isOpen).toBe(false);
   });
+
+  it('ignores a client error emitted after teardown', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    await session.connect();
+
+    const originalEnd = fake.end.bind(fake);
+    fake.end = (): void => {
+      originalEnd();
+      setTimeout(() => {
+        fake.emit('error', new Error('Connection lost before handshake'));
+      }, 0);
+    };
+
+    await session.disconnect();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+
+    expect(session.isOpen).toBe(false);
+    expect(fake.listenerCount('error')).toBe(1);
+  });
 });

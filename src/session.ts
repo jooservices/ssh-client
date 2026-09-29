@@ -434,6 +434,7 @@ export class SshSession {
     attempt.removeAbort?.();
     attempt.removeAbort = undefined;
 
+    // ssh2 emits `error` after `end()` returns. Removing this listener makes that error uncaught.
     const swallow: ClientListener = (): void => undefined;
     attempt.client.on('error', swallow);
 
@@ -446,7 +447,6 @@ export class SshSession {
     }
 
     this.endClient(attempt);
-    attempt.client.removeListener('error', swallow);
     attempt.stream = null;
 
     if (this.active === attempt) {

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A socket error that arrives after the SSH client is closed no longer becomes an uncaught exception.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added
