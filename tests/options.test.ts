@@ -46,7 +46,7 @@ describe('resolveOptions', () => {
       maxPages: DEFAULTS.maxPages,
       maxOutputBytes: DEFAULTS.maxOutputBytes,
       settleMs: DEFAULTS.settleMs,
-      promptRegex: DEFAULTS.promptRegex,
+      promptRegex: null,
       term: DEFAULTS.term,
       rows: DEFAULTS.rows,
       cols: DEFAULTS.cols,
