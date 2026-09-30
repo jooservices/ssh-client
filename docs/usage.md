@@ -48,16 +48,17 @@ options are range-checked (e.g. `port` 1–65535, timeouts 1–600000 ms).
 | `port` | `number` | `22` | integer 1–65535 |
 | `username` | `string` | — | **required** (trimmed) |
 | `password` | `string` | — | **required**, non-empty (password auth only) |
-| `hostFingerprint` | `string` | — | **required** unless `insecureSkipVerify`; `SHA256:…` or 64-char hex |
+| `hostFingerprint` | `string` | — | **required** unless `insecureSkipVerify`; `SHA256:` plus 43 base64 chars, or 64 hex digits (colons allowed) |
 | `insecureSkipVerify` | `boolean` | `false` | lab/test hatch; skips host-key check |
 | `readyTimeoutMs` | `number` | `20000` | one budget for handshake, shell open, and the first prompt |
 | `commandTimeoutMs` | `number` | `15000` | per-`exec` default timeout |
 | `maxPages` | `number` | `60` | pager page cap per command |
 | `settleMs` | `number` | `150` | quiet time after prompt match before resolving |
-| `promptRegex` | `RegExp` | unset | optional full-line matcher; omit it to use the captured ready line |
-| `maxOutputBytes` | `number` | `8388608` (8 MiB) | cap for ready banner and for each command |
-| `term` / `rows` / `cols` | PTY | `vt100` / `200` / `200` | interactive shell window |
-| `idleBufferMaxBytes` | `number` | `65536` | unsolicited data cap between commands |
+| `promptRegex` | `RegExp` | unset | optional whole-line matcher; `g` / `y` / `m` are ignored. Omit it to use the captured ready line |
+| `maxOutputBytes` | `number` | `8388608` (8 MiB) | cap for ready banner, each command, and resync |
+| `maxPromptLength` | `number` | `256` | integer 16–4096; prompt and pager scans use this display tail |
+| `term` / `rows` / `cols` | PTY | `vt100` / `200` / `200` | `term` is 1–32 letters, digits, or hyphens (`xterm-256color` is valid) |
+| `idleBufferMaxBytes` | `number` | `65536` | **deprecated.** Still validated, then ignored. Idle bytes are discarded on arrival |
 
 ## `exec(command, options?)`
 
@@ -81,22 +82,25 @@ Per-call `ExecOptions` (each falls back to the client value where applicable):
 | `maxPages` | `number` | client `maxPages` | integer 1..instance `maxPages` |
 | `maxOutputBytes` | `number` | client cap | integer 1..instance `maxOutputBytes` |
 
-`exec` writes the command as one raw shell line. It does not shell-escape,
-does not collect an exit code, and does not split stderr. The caller owns
-whatever the remote shell does with that line.
+`exec` writes the command as one raw shell line. It rejects C0 controls, DEL,
+and tabs before connect. It does not shell-escape, does not collect an exit
+code, and does not split stderr. Quote untrusted data before you pass it in.
 
 Invalid `ExecOptions` reject with `invalid` before connect or write. An
-already-aborted signal is checked after that validation.
+already-aborted signal is checked after that validation. A signal that aborts
+while the command is queued rejects that caller with `closed` before connect
+or write.
 
 Behavioral guarantees:
 
-- An empty/whitespace-only command rejects with `invalid`.
+- An empty/whitespace-only command rejects with `invalid` and message `command is empty`.
+- A command that contains a control character, DEL, or a tab rejects with `invalid` and message `command must be a single line without control characters`.
 - Commands are **serialized** on the single shell session — concurrent `exec`
   calls on one client are queued, one command ↔ one response.
 - `exec` connects when the session is down, including the first call and a
   call that starts after `disconnect()` has resolved.
 - Output bytes are counted as raw chunk length. A multibyte character that
-  crosses `maxOutputBytes` rejects with `invalid`.
+  crosses `maxOutputBytes` rejects with `limit` and closes the session.
 
 ### Disconnect
 
@@ -107,59 +111,72 @@ Behavioral guarantees:
 | `exec` / `connect` while `disconnect()` is in progress | rejects `closed` immediately |
 | `exec` / `connect` after `disconnect()` resolves | may open a new session |
 
-`disconnect()` itself is idempotent.
+`disconnect()` itself is idempotent. It does not write `exit`. It waits until
+the client emits `close`, or 1 second, whichever comes first.
 
 ### Prompt and stdout
 
 Ready waits for one line that contains a non-space and ends with `>`, `#`,
-`$`, or `%` (trailing spaces allowed). That exact line, including trailing
-spaces, becomes the prompt identity. Command completion uses that identity.
-`promptRegex`, when set, replaces the identity for both ready and commands and
-must cover the entire current line (`index === 0` and the match length equals
-the line). A line that merely ends with `#` or `>` does not finish a command.
+`$`, or `%` (trailing spaces allowed). That line must settle, a confirming CR
+is sent, and the same line must settle again. That exact line, including
+trailing spaces, becomes the prompt identity. Command completion uses that
+identity. `promptRegex`, when set, is compiled as `^(?:source)$`. Flags `g`,
+`y`, and `m` are dropped; `i` and `u` stay. A line longer than
+`maxPromptLength` is not treated as a prompt. A line that merely ends with
+`#` or `>` does not finish a command.
 
 Stdout normalization, and nothing else:
 
-- `\r\n` and a lone `\r` become `\n`. This is not a terminal emulator: a bare
-  CR does not erase the line.
-- The substring `--- MORE ---` is removed.
+- ANSI and OSC sequences are removed, including when a sequence is split across chunks.
+- `\r\n` is one newline. A lone `\r` overwrites the current display line.
+- A `--- MORE ---` marker is removed only when this command paged that tail. A marker that already ended with a newline stays in the output.
 - The final prompt line is removed.
 - The first line is removed when it is the echoed command (the line equals the
-  command, or it ends with the command and the prefix is the prompt).
+  command, or it ends with the command and the prefix is the prompt). A wrap
+  may insert a newline or a single space before that newline. `show` does not
+  strip `show version`.
 - Later copies of the command, blank lines, indentation, and leading `#` / `>`
   stay. The result is not trimmed.
 
 ### Timeouts
 
-`readyTimeoutMs` is a single deadline from `connect()` through the handshake,
-authentication, shell open, and the first prompt. Later phases receive only
-the time still left. A handshake error whose message says it timed out is
-`timeout`. Host-key mismatch stays `connect`.
+`readyTimeoutMs` is a single monotonic deadline from `connect()` through the
+handshake, authentication, shell open, and the confirmed prompt. Later phases
+receive only the time still left. A handshake error whose ssh2 level is
+`client-timeout` is `timeout`. A pinned host key that does not match is
+`hostkey`.
 
-A command timeout writes `q` when a pager was active, otherwise a bare CR, and
-waits up to 5 seconds for the prompt. Success keeps the session. Failure
-closes it so the next allowed `exec` can connect again. There is no TCP
-keepalive setting and no algorithm allowlist; ssh2 defaults stay in place.
+A command timeout or abort starts resync and the next command waits for it.
+Resync sends `q` when a pager marker is still the unterminated tail, otherwise
+Ctrl-C, then waits up to 5 seconds. If that `q` fails and time remains, it
+sends Ctrl-C. A recovered line that is not the prompt gets Ctrl-U and CR once.
+Resync counts bytes against the caller's `maxOutputBytes`. Success keeps the
+session. Failure closes it (`closed` / `resync failed`) so the next allowed
+`exec` can connect again. There is no TCP keepalive setting and no algorithm
+allowlist; ssh2 defaults stay in place.
 
 ## Error codes (`SshClientError.code`)
 
 `SshClientError` (exported) extends `Error` with a stable `code`:
-`'connect' | 'auth' | 'timeout' | 'closed' | 'invalid'`.
+`'connect' | 'auth' | 'timeout' | 'closed' | 'invalid' | 'hostkey' | 'limit'`.
+The constructor accepts an optional `{ cause }`.
 
 | Code | When it fires |
 | --- | --- |
-| `invalid` | constructor or `ExecOptions` validation; empty `exec` command; ready or command output exceeded `maxOutputBytes` |
-| `connect` | handshake failed, pinned host key did not match, shell open failed, or the channel died before ready |
+| `invalid` | constructor or `ExecOptions` validation; empty `exec` command; control character in the command |
+| `connect` | handshake failed, shell open failed, or the channel died before ready |
 | `auth` | handshake error indicating an authentication/credential problem |
-| `timeout` | handshake reported a timeout; ready budget exhausted; command, idle, or pager cap exceeded |
-| `closed` | abort; disconnect barrier; channel or client failure after ready |
+| `hostkey` | the pinned host key did not match |
+| `timeout` | handshake reported a timeout; ready budget exhausted; command or idle timeout |
+| `limit` | ready or command output exceeded `maxOutputBytes`; pager exceeded `maxPages` |
+| `closed` | abort; disconnect barrier; channel or client failure after ready; resync failed |
 
 ```ts
 try {
   await client.exec('sys restart');
 } catch (err) {
   if (err instanceof SshClientError) {
-    // err.code: 'connect' | 'auth' | 'timeout' | 'closed' | 'invalid'
+    // err.code: 'connect' | 'auth' | 'timeout' | 'closed' | 'invalid' | 'hostkey' | 'limit'
   }
 }
 ```
@@ -167,7 +184,7 @@ try {
 ## Host-key pinning
 
 Connections **fail closed**: without a matching `hostFingerprint`, the client
-never trusts the host (`connect` error, no commands run). `insecureSkipVerify`
+never trusts the host (`hostkey`, no commands run). `insecureSkipVerify`
 is a lab and test hatch only.
 
 ```bash
@@ -220,13 +237,14 @@ const { stdout } = await client.exec('sys config show', {
 
 ## Output cap and pager
 
-Shell output accumulates in memory. Ready banner bytes and command bytes
-share the instance `maxOutputBytes` (default 8 MiB). Exceeding it rejects with
-`invalid` and closes the session. A `--- MORE ---` pager is space-scrolled up
-to `maxPages` (default 60); the next prompt after the cap rejects with
-`timeout`. Bash prompts such as `user@host:~$ ` are captured as-is when
-`promptRegex` is omitted. Set `promptRegex` only when the prompt changes, and
-make it match the entire line.
+Shell output accumulates in memory. Ready banner bytes, command bytes, and
+resync bytes share the caller's `maxOutputBytes` (default 8 MiB). Exceeding it
+rejects with `limit` and closes the session. A `--- MORE ---` pager is
+space-scrolled while the marker is the unterminated tail, up to `maxPages`
+(default 60). The next prompt after that cap rejects with `limit`. Bash
+prompts such as `user@host:~$ ` are captured as-is when `promptRegex` is
+omitted. Set `promptRegex` only when the prompt changes; it is anchored to
+the whole line.
 
 ## Live smoke (opt-in)
 

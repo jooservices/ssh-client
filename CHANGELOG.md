@@ -6,14 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SshClientError` codes `hostkey` (pinned host key rejected) and `limit` (output or pager cap).
+- Optional `maxPromptLength` (default 256, range 16–4096). Prompt matching uses only that display tail.
+- Local `npm run test:e2e` checks Node `>=24.21.0 <25` and a running Docker daemon before the Ubuntu sshd suite.
+- Docker Ubuntu E2E now covers auth failure, host-key skip, ready and command timeouts, idle timeout, abort, output cap, pager, disconnect barrier, shell exit, and PTY `TERM`.
+
+### Changed
+
+- `exec` rejects a command that contains a C0 control character, DEL, or a tab. The command must be one line. The caller still quotes untrusted data for the remote shell.
+- The password is stored in ECMAScript private fields, so `util.inspect` (including `showHidden`) and `JSON.stringify` do not reveal it.
+- After a timeout or abort, resync sends Ctrl-C (or `q` when a pager marker is still the tail), waits for that resync to finish before the next command, and sends Ctrl-U plus CR once if the recovered line is not the prompt. Resync uses the caller's `maxOutputBytes` and a 5s budget.
+- `promptRegex` is anchored to the whole line. Flags `g`, `y`, and `m` are ignored; `i` and `u` are kept.
+- Command output treats CR as a terminal overwrite, strips ANSI/OSC sequences, and removes a `--- MORE ---` marker only when this command actually paged it.
+- Ready waits until the same prompt line settles twice, which drops a banner that only looked like a prompt.
+- `durationMs` and `connectMs` use a monotonic clock. `sendAt` and `recvAt` stay epoch milliseconds.
+- One caller's abort during a shared connect rejects only that caller.
+- `disconnect()` waits for the client `close` event or 1s, and does not write `exit`.
+- `hostFingerprint` must be a SHA-256 base64 fingerprint or 64 hex digits. `term` must be 1–32 letters, digits, or hyphens.
+- `SshClientError` accepts an optional `cause`.
+
+### Deprecated
+
+- `idleBufferMaxBytes` is still accepted and validated, and it is ignored. Idle bytes are discarded when they arrive.
+
 ### Fixed
 
 - A socket error that arrives after the SSH client is closed no longer becomes an uncaught exception.
-
-### Added
-
-- Local `npm run test:e2e` checks Node `>=24.21.0 <25` and a running Docker daemon before the Ubuntu sshd suite.
-- Docker Ubuntu E2E now covers auth failure, host-key skip, ready and command timeouts, idle timeout, abort, output cap, pager, disconnect barrier, shell exit, and PTY `TERM`.
 
 ## [1.1.0] - 2026-09-29
 

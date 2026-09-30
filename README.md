@@ -43,18 +43,23 @@ Disconnecting twice is safe.
 ## Highlights
 
 - **Interactive shell** — `exec` writes one raw line (`command\r`) on a PTY
-  shell. There is no exit code and no separate stderr. The first ready line
-  that looks like a prompt is captured and later commands must repeat that
-  exact line. `promptRegex`, when set, must match the whole line. Output keeps
-  indentation, blank lines, and leading `#` / `>`. A `--- MORE ---` pager is
-  space-scrolled up to `maxPages` (default 60).
+  shell and rejects control characters, DEL, and tabs. There is no exit code
+  and no separate stderr. The ready prompt is confirmed, then later commands
+  must repeat that exact line. `promptRegex`, when set, is anchored to the
+  whole line. Output keeps indentation and blank lines, treats CR as an
+  overwrite, and strips ANSI sequences. A `--- MORE ---` pager is
+  space-scrolled up to `maxPages` (default 60) only while the marker is the
+  current tail.
 - **Host-key pinning** — connections fail closed unless `hostFingerprint`
-  (OpenSSH `SHA256:…` or hex form) is pinned and matched. `insecureSkipVerify`
-  is a lab/test hatch only. `fingerprintSha256()` computes fingerprints.
+  (OpenSSH `SHA256:…` or 64 hex digits) is pinned and matched. A mismatch is
+  `hostkey`. `insecureSkipVerify` is a lab/test hatch only.
+  `fingerprintSha256()` computes fingerprints. The password is not visible
+  through `util.inspect` or `JSON.stringify`.
 - **Transport hygiene** — one ready budget covers handshake, shell open, and
   the first prompt. Disconnect rejects in-flight and queued `exec` with
-  `closed`. A failed prompt resync closes the session. This library does not
-  enable TCP keepalive and does not narrow ssh2 algorithms.
+  `closed` and waits for the socket to close. A failed prompt resync closes
+  the session. Output and pager caps reject with `limit`. This library does
+  not enable TCP keepalive and does not narrow ssh2 algorithms.
 
 ## Development
 
