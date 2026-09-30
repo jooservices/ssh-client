@@ -1,72 +1,76 @@
 import { SshClientError } from './errors.js';
 
-const MORE_RE = /---\s*MORE\s*---/i;
+const MORE_RE = /---\s*MORE\s*---\s*$/i;
 
 export interface PagerState {
   pages: number;
-  /** Index into the current command segment after the last handled MORE. */
-  morePos: number;
+  /** Tail already answered, so the same marker is not scrolled twice. */
+  answeredTail: string | null;
+  /** Display-line generation of `answeredTail`. A later line may repeat the marker text. */
+  answeredEpoch: number;
   quitSent: boolean;
+  handled: number;
 }
 
 export function createPagerState(): PagerState {
-  return { pages: 0, morePos: 0, quitSent: false };
+  return { pages: 0, answeredTail: null, answeredEpoch: -1, quitSent: false, handled: 0 };
+}
+
+/** True when the unterminated line is a pager prompt, not marker text followed by a newline. */
+export function markerOnTail(line: string): boolean {
+  return MORE_RE.test(line);
 }
 
 /**
- * Respond to each NEW `--- MORE ---` marker once (MCP morePos style).
- * Space-scrolls until maxPages, then sends `q` once so the shell can leave the pager.
- * Does not mutate away markers from `segment` (cleanOutput strips them later).
+ * Page only when the marker is the current tail. A marker that already ended
+ * with a newline is ordinary output and is left untouched.
  */
-export function handlePagerIfNeeded(
-  segment: string,
+export function handlePagerTail(
+  line: string,
   stream: { write: (data: string) => unknown },
   state: PagerState,
   maxPages: number,
-): { segment: string; quitSent: boolean } {
-  for (;;) {
-    const slice = segment.slice(state.morePos);
-    const match = MORE_RE.exec(slice);
-    if (!match || match.index === undefined) {
-      break;
-    }
-
-    state.morePos += match.index + match[0].length;
-
-    if (state.pages >= maxPages) {
-      if (!state.quitSent) {
-        stream.write('q');
-        state.quitSent = true;
-      }
-      break;
-    }
-
-    state.pages += 1;
-    stream.write(' ');
+): boolean {
+  if (!markerOnTail(line) || state.answeredTail === line) {
+    return false;
   }
 
-  return { segment, quitSent: state.quitSent };
+  state.answeredTail = line;
+  state.handled += 1;
+
+  if (state.pages >= maxPages) {
+    if (!state.quitSent) {
+      stream.write('q');
+      state.quitSent = true;
+    }
+
+    return true;
+  }
+
+  state.pages += 1;
+  stream.write(' ');
+
+  return true;
 }
 
 export function pagerExceededError(maxPages: number): SshClientError {
-  return new SshClientError('timeout', `pager exceeded maxPages=${maxPages}`);
+  return new SshClientError('limit', `pager exceeded maxPages=${maxPages}`);
 }
 
-/**
- * Scan `text` for pager markers. Returns the unscanned suffix, keeping a short
- * tail so a marker split across chunks is still visible on the next push.
- */
-export function scanPagerText(
-  text: string,
-  stream: { write: (data: string) => unknown },
-  state: PagerState,
-  maxPages: number,
-): string {
-  const local: PagerState = { pages: state.pages, morePos: 0, quitSent: state.quitSent };
-  handlePagerIfNeeded(text, stream, local, maxPages);
-  state.pages = local.pages;
-  state.quitSent = local.quitSent;
-  const rest = text.slice(local.morePos);
+export function removeHandledMarkers(text: string, handled: number): string {
+  if (handled <= 0) {
+    return text;
+  }
 
-  return rest.length > 24 ? rest.slice(rest.length - 24) : rest;
+  let left = handled;
+
+  return text.replace(/---\s*MORE\s*---/giu, (marker) => {
+    if (left <= 0) {
+      return marker;
+    }
+
+    left -= 1;
+
+    return '';
+  });
 }

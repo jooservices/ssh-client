@@ -1,6 +1,6 @@
 {
   "name": "@jooservices/ssh-client",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Node 24 SSH client library — interactive shell sessions, host-key pinning, usable from any app.",
   "private": true,
   "type": "module",
@@ -24,16 +24,18 @@
     "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
     "test:consumer": "node tools/consumer-smoke.mjs",
     "test:e2e": "bash tools/e2e.sh",
-    "ci": "npm run lint && npm run typecheck:tests && npm run test:coverage && npm run build && npm run test:consumer"
+    "audit:prod": "npm audit --omit=dev",
+    "ci": "npm run audit:prod && npm run lint && npm run typecheck:tests && npm run test:coverage && npm run build && npm run test:consumer"
   },
   "dependencies": {
     "ssh2": "^1.16.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.3",
     "@types/ssh2": "^1.15.6",
-    "@vitest/coverage-v8": "^5.0.0",
-    "typescript": "^5.7.0",
-    "vitest": "^5.0.0"
+    "@vitest/coverage-v8": "^5.0.2",
+    "fast-check": "^4.10.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SshClientError } from '../src/errors.js';
+import { messageOf, SshClientError, toSshError } from '../src/errors.js';
 import { DEFAULTS, resolveOptions } from '../src/options.js';
 import type { SshClientOptions } from '../src/public-types.js';
 
@@ -7,7 +7,7 @@ const validOptions: SshClientOptions = {
   host: 'router.local',
   username: 'admin',
   password: 'secret',
-  hostFingerprint: 'SHA256:abc123',
+  hostFingerprint: `SHA256:${'A'.repeat(43)}`,
 };
 
 describe('resolveOptions', () => {
@@ -54,6 +54,23 @@ describe('resolveOptions', () => {
     });
   });
 
+  it('accepts a hyphenated term and rejects spaces', () => {
+    expect(resolveOptions({ ...validOptions, term: 'xterm-256color' }).term).toBe('xterm-256color');
+    expect(() => resolveOptions({ ...validOptions, term: 'bad term' })).toThrow(
+      'term must be 1-32 letters, digits, or hyphens',
+    );
+  });
+
+  it('stringifies a non-error cause and keeps a typed error', () => {
+    expect(messageOf(12)).toBe('12');
+    expect(toSshError(12, 'connect')).toMatchObject({ code: 'connect', message: '12' });
+
+    const typed = new SshClientError('limit', 'cap', { cause: 12 });
+
+    expect(typed.cause).toBe(12);
+    expect(toSshError(typed, 'closed')).toBe(typed);
+  });
+
   it('keeps explicit PTY and idle buffer overrides', () => {
     const resolved = resolveOptions({
       ...validOptions,
@@ -91,8 +108,11 @@ describe('resolveOptions', () => {
       maxPages: 3,
       maxOutputBytes: 512,
       settleMs: 4,
-      promptRegex,
     });
+    expect(resolved.promptRegex?.test('$')).toBe(true);
+    expect(resolved.promptRegex?.test('host$ ')).toBe(false);
+    expect(resolved.promptRegex?.flags.includes('m')).toBe(false);
+    expect(resolved.promptRegex).not.toBe(promptRegex);
   });
 
   it('rejects out-of-range numeric options', () => {
