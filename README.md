@@ -13,7 +13,7 @@ output is handled automatically.
 
 ## Status
 
-**v1.2.0** — interactive-shell SSH client with host-key pinning, attempt isolation, and lossless command output.
+**v1.3.0** — interactive-shell SSH client with host-key pinning, attempt isolation, lossless command output, and DrayOS pager support.
 The package stays private (`"private": true`) and is not published to npm;
 consume it from the checkout or a Git tag. See [`CHANGELOG.md`](./CHANGELOG.md).
 
