@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-30
+
+### Fixed
+
+- The pager now answers the DrayOS marker `--- MORE ---   ['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page] ---`. Since 1.2.0 only a line ending in `--- MORE ---` matched, so long DrayOS output (for example `wan status` on a Vigor 3912S) stalled and failed with an idle timeout.
+- A marker whose key hint arrives in a later chunk is answered once. A marker repainted after a carriage return is answered again.
+- The key hint is removed from command output together with a handled marker.
+
 ## [1.2.0] - 2026-09-29
 
 ### Added

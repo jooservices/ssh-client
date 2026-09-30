@@ -1,6 +1,9 @@
 import { SshClientError } from './errors.js';
 
-const MORE_RE = /---\s*MORE\s*---\s*$/i;
+// DrayOS appends a key hint: `--- MORE ---   ['q': Quit, ...] ---`.
+const MARKER = String.raw`---\s*MORE\s*---(?:[ \t]*\[[^\]\n]*\](?:[ \t]*---)?)?`;
+const MORE_RE = new RegExp(`${MARKER}\\s*$`, 'i');
+const MARKER_RE = new RegExp(MARKER, 'giu');
 
 export interface PagerState {
   pages: number;
@@ -31,7 +34,8 @@ export function handlePagerTail(
   state: PagerState,
   maxPages: number,
 ): boolean {
-  if (!markerOnTail(line) || state.answeredTail === line) {
+  // A tail that extends the answered one is the same marker still arriving.
+  if (!markerOnTail(line) || (state.answeredTail !== null && line.startsWith(state.answeredTail))) {
     return false;
   }
 
@@ -64,7 +68,7 @@ export function removeHandledMarkers(text: string, handled: number): string {
 
   let left = handled;
 
-  return text.replace(/---\s*MORE\s*---/giu, (marker) => {
+  return text.replace(MARKER_RE, (marker) => {
     if (left <= 0) {
       return marker;
     }

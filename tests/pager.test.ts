@@ -77,4 +77,30 @@ describe('handlePagerTail', () => {
     expect(markerOnTail('--- MORE ---\nb')).toBe(false);
     expect(markerOnTail('tail --- MORE ---')).toBe(true);
   });
+
+  it('recognizes the DrayOS marker with its key hint as the tail', () => {
+    const hint = "['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page]";
+
+    expect(markerOnTail(`--- MORE ---   ${hint} --- `)).toBe(true);
+    expect(markerOnTail(`--- MORE ---   ${hint} `)).toBe(true);
+    expect(markerOnTail(`--- MORE ---   ${hint} ---\nb`)).toBe(false);
+    expect(markerOnTail('--- MORE --- trailing output')).toBe(false);
+  });
+
+  it('answers a marker once while its key hint is still arriving', () => {
+    const writes: string[] = [];
+    const state = createPagerState();
+    const write = { write: (data: string) => writes.push(data) };
+
+    expect(handlePagerTail('--- MORE ---', write, state, 5)).toBe(true);
+    expect(handlePagerTail("--- MORE ---   ['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page] ---", write, state, 5)).toBe(false);
+    expect(writes).toEqual([' ']);
+    expect(state.handled).toBe(1);
+  });
+
+  it('removes the DrayOS key hint together with a handled marker', () => {
+    const marker = "--- MORE ---   ['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page] ---";
+
+    expect(removeHandledMarkers(`a\n${marker}\nb`, 1)).toBe('a\n\nb');
+  });
 });
