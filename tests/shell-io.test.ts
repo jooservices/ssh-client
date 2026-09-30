@@ -78,7 +78,7 @@ describe('runCommandOnShell', () => {
     const removeListener = vi.spyOn(channel, 'removeListener');
 
     await expect(runCommandOnShell(channel, command, options({ maxOutputBytes: 8 }))).rejects.toMatchObject({
-      code: 'invalid',
+      code: 'limit',
       message: 'command output exceeded maxOutputBytes=8',
     });
     expect(removeListener).toHaveBeenCalledWith('data', expect.any(Function));

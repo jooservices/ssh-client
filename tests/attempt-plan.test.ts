@@ -138,6 +138,19 @@ describe('classifyConnectError', () => {
     expect(classifyConnectError('password rejected')).toBe('auth');
     expect(classifyConnectError('credential rejected')).toBe('auth');
     expect(classifyConnectError('socket hang up')).toBe('connect');
+    expect(classifyConnectError('Keepalive timeout')).toBe('connect');
+    expect(classifyConnectError('ECONNREFUSED')).toBe('connect');
+  });
+
+  it('prefers ssh2 error level and a host-key rejection flag', () => {
+    expect(classifyConnectError({ level: 'client-timeout', message: 'Keepalive timeout' })).toBe('timeout');
+    expect(classifyConnectError({ level: 'client-authentication', message: 'failed' })).toBe('auth');
+    expect(classifyConnectError({ level: 'agent', message: 'failed' })).toBe('auth');
+    expect(classifyConnectError({ level: 'client-socket', message: 'reset' })).toBe('connect');
+    expect(classifyConnectError({ level: 'handshake', message: 'Host denied (verification failed)' })).toBe('connect');
+    expect(classifyConnectError({ level: 'protocol', message: 'bad' })).toBe('connect');
+    expect(classifyConnectError({ level: 'handshake', message: 'Host denied (verification failed)' }, true)).toBe('hostkey');
+    expect(classifyConnectError('Host key verification failed', true)).toBe('hostkey');
   });
 });
 

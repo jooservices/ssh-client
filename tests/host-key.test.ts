@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { fingerprintSha256, hostKeyMatches, normalize } from '../src/host-key.js';
+import { SshClientError } from '../src/errors.js';
+import { fingerprintSha256, hostKeyMatches, normalize, parseFingerprint } from '../src/host-key.js';
 
 const hostKey = Buffer.from('test-host-key');
 const digestHex = createHash('sha256').update(hostKey).digest('hex');
@@ -21,6 +22,21 @@ describe('normalize', () => {
     ['opaque non-sha256 fingerprint', '  md5:legacy  ', 'md5:legacy'],
   ])('normalizes %s', (_caseName, input, expected) => {
     expect(normalize(input)).toBe(expected);
+  });
+});
+
+describe('parseFingerprint', () => {
+  it('accepts SHA256 base64, hex, and colon-hex', () => {
+    expect(parseFingerprint(`  sha256:${digestBase64}  `)).toBe(unpaddedFingerprint);
+    expect(parseFingerprint(digestHex)).toBe(unpaddedFingerprint);
+    const colon = digestHex.replace(/(.{2})(?!$)/gu, '$1:');
+    expect(parseFingerprint(colon)).toBe(unpaddedFingerprint);
+  });
+
+  it('rejects MD5, empty, and the wrong length', () => {
+    expect(() => parseFingerprint('md5:legacy')).toThrow(SshClientError);
+    expect(() => parseFingerprint('')).toThrow(/SHA256 base64 fingerprint or 64 hex digits/u);
+    expect(() => parseFingerprint('SHA256:abc123')).toThrow(/SHA256 base64 fingerprint or 64 hex digits/u);
   });
 });
 

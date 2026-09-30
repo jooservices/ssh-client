@@ -90,7 +90,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
 
     await expect(client.connect()).rejects.toMatchObject({
       name: 'SshClientError',
-      code: 'connect',
+      code: 'hostkey',
     } satisfies Partial<SshClientError>);
     expect(client.connected).toBe(false);
   });
@@ -180,7 +180,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
     const client = createClient();
     const result = await client.exec("printf 'a\\rb\\n'");
 
-    expect(result.stdout).toBe('a\nb');
+    expect(result.stdout).toBe('b');
   });
 
   it('queues concurrent execs on one shell', async () => {
@@ -290,7 +290,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
 
     await expect(client.exec(`printf '%s' '${payload}'`, { maxOutputBytes: 80 })).rejects.toMatchObject({
       name: 'SshClientError',
-      code: 'invalid',
+      code: 'limit',
       message: 'command output exceeded maxOutputBytes=80',
     } satisfies Partial<SshClientError>);
     expect(client.connected).toBe(false);
@@ -302,7 +302,7 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
 
   it('e2e pager strips more and continues', async () => {
     const client = createClient();
-    const result = await client.exec("printf 'pre\\n--- %s ---\\n' MORE; read -n 1 -s _; printf 'post\\n'");
+    const result = await client.exec("printf 'pre\\n--- MORE ---'; read -n 1 -s _; printf '\\npost\\n'");
 
     expect(result.stdout).toBe('pre\n\npost');
   });
@@ -312,12 +312,12 @@ describeE2e('SshClient Docker Ubuntu E2E', () => {
 
     await expect(
       client.exec(
-        "printf '--- MORE ---\\n'; read -n 1 -s _; printf '--- MORE ---\\n'; read -n 1 -s _; printf 'done\\n'",
+        "printf '%s' '--- MORE ---'; read -n 1 -s _; printf '\\n%s' '--- MORE ---'; read -n 1 -s _; printf '\\n%s\\n' done",
         { maxPages: 1, timeoutMs: 8_000 },
       ),
     ).rejects.toMatchObject({
       name: 'SshClientError',
-      code: 'timeout',
+      code: 'limit',
       message: 'pager exceeded maxPages=1',
     } satisfies Partial<SshClientError>);
 

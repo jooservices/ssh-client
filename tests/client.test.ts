@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { inspect } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SshClient, fingerprintSha256 } from '../src/index.js';
 import { FakeSsh2Client, type FakeSsh2ClientOptions } from './support/fake-ssh2.js';
@@ -52,7 +53,7 @@ describe('SshClient', () => {
     expect(client.connected).toBe(false);
     expect(fake.channel.closed).toBe(true);
     expect(fake.ended).toBe(true);
-    expect(fake.channel.writes.some((w) => String(w).includes('exit'))).toBe(true);
+    expect(fake.endCount).toBe(1);
   });
 
   it('serializes concurrent exec calls in FIFO order without interleaving commands', async () => {
@@ -105,7 +106,7 @@ describe('SshClient', () => {
     enqueueFake({ hostKey: Buffer.from('different-client-host-key') });
     const client = createClient();
 
-    await expect(client.connect()).rejects.toMatchObject({ code: 'connect' });
+    await expect(client.connect()).rejects.toMatchObject({ code: 'hostkey' });
   });
 
   it('maps authentication failures to auth', async () => {
@@ -170,6 +171,33 @@ describe('SshClient', () => {
 
     await expect(client.exec(command)).rejects.toMatchObject({ code: 'connect', message: 'network unreachable' });
     expect(client.connected).toBe(false);
+  });
+
+  it('rejects control characters before connect', async () => {
+    const fake = enqueueFake();
+    const client = createClient();
+
+    await expect(client.exec('show\nversion')).rejects.toMatchObject({
+      code: 'invalid',
+      message: 'command must be a single line without control characters',
+    });
+    await expect(client.exec('show\tversion')).rejects.toMatchObject({ code: 'invalid' });
+    expect(fake.connectConfig).toBeNull();
+    expect(fake.channel.writes).toEqual([]);
+  });
+
+  it('hides the password from inspect and JSON', () => {
+    const password = `secret-${randomUUID()}`;
+    const client = new SshClient({
+      host: 'router.local',
+      username: 'admin',
+      password,
+      hostFingerprint: fingerprintSha256(hostKey),
+    });
+
+    expect(inspect(client, { depth: 10, showHidden: true })).not.toContain(password);
+    expect(JSON.stringify(client)).not.toContain(password);
+    expect(inspect(client.shellWindow)).not.toContain(password);
   });
 });
 

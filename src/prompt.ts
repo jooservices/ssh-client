@@ -5,21 +5,24 @@ export function looksLikeReadyPrompt(line: string): boolean {
   return /\S/u.test(line) && READY_PROMPT.test(line);
 }
 
-export function normalizePromptRegex(promptRegex: RegExp): RegExp {
-  if (!promptRegex.flags.includes('g')) {
-    return promptRegex;
-  }
+/**
+ * Anchor a caller regex to the whole line and drop flags that change where
+ * `test` starts. `i` and `u` are kept.
+ */
+export function compilePromptRegex(promptRegex: RegExp): RegExp {
+  const flags = promptRegex.flags.replace(/[gym]/gu, '');
 
-  return new RegExp(promptRegex.source, promptRegex.flags.replaceAll('g', ''));
+  return new RegExp(`^(?:${promptRegex.source})$`, flags);
+}
+
+/** @deprecated Use {@link compilePromptRegex}. Kept so existing imports keep working. */
+export function normalizePromptRegex(promptRegex: RegExp): RegExp {
+  return compilePromptRegex(promptRegex);
 }
 
 /** True only when the regex matches the entire line. */
 export function lineFullyMatches(line: string, promptRegex: RegExp): boolean {
-  const regex = normalizePromptRegex(promptRegex);
-  regex.lastIndex = 0;
-  const match = regex.exec(line);
-
-  return match !== null && match.index === 0 && match[0].length === line.length;
+  return compilePromptRegex(promptRegex).test(line);
 }
 
 export function isPromptLine(
@@ -28,7 +31,7 @@ export function isPromptLine(
   promptRegex: RegExp | null,
 ): boolean {
   if (promptRegex) {
-    return lineFullyMatches(line, promptRegex);
+    return promptRegex.test(line);
   }
 
   return identity !== null && line === identity;

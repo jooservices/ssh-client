@@ -117,7 +117,7 @@ describe('SshClient barrier', () => {
     const client = createClient({ maxOutputBytes: 8 });
 
     await expect(client.exec(command)).rejects.toMatchObject({
-      code: 'invalid',
+      code: 'limit',
       message: 'command output exceeded maxOutputBytes=8',
     });
     expect(client.connected).toBe(false);
@@ -188,7 +188,6 @@ describe('SshClient barrier', () => {
     const command = `prompt ${randomUUID()}`;
     enqueueFake({
       commands: { [command]: { body: 'value\n', prompt: 'router> ' } },
-      ignoreBareCr: true,
     });
     const client = createClient({ commandTimeoutMs: 40 });
 
@@ -218,7 +217,7 @@ describe('SshClient barrier', () => {
   it('resync failure closes the session', async () => {
     const stuck = `dead ${randomUUID()}`;
     const fake = enqueueFake({
-      ignoreBareCr: true,
+      ignoreInterrupt: true,
       commands: { [stuck]: { body: 'x\n', prompt: '' } },
     });
     const client = createClient({ commandTimeoutMs: 30 });

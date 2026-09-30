@@ -5,7 +5,7 @@ import {
   type AttemptEffect,
   type AttemptSnapshot,
 } from './attempt-plan.js';
-import { SshClientError, type SshErrorCode } from './errors.js';
+import { messageOf, SshClientError, type SshErrorCode } from './errors.js';
 import { hostKeyMatches } from './host-key.js';
 import { ptyOptions, type ResolvedOptions } from './options.js';
 import type { ShellPtyOptions } from './public-types.js';
@@ -15,6 +15,9 @@ type ClientEvent = 'ready' | 'error' | 'close';
 type ChannelEvent = 'close' | 'end' | 'error';
 type ClientListener = (...args: unknown[]) => void;
 type ChannelListener = (err?: unknown) => void;
+
+const CLOSE_WAIT_MS = 1_000;
+const READY_PASSTHROUGH = new Set<SshErrorCode>(['timeout', 'invalid', 'limit', 'hostkey']);
 
 export interface ShellChannelLike extends ShellStream {
   close: () => void;
@@ -55,57 +58,70 @@ interface ConnectionAttempt {
   io: ShellIo | null;
   tornDown: boolean;
   clientEnded: boolean;
+  hostKeyRejected: boolean;
+  shellWindow: ShellPtyOptions | null;
   shellTimer: ReturnType<typeof setTimeout> | null;
-  removeAbort?: () => void;
+  endPromise?: Promise<void>;
   onReady: ClientListener;
   onError: ClientListener;
   onClose: ClientListener;
   onChannelGone?: ChannelListener;
 }
 
+interface Subscriber {
+  resolve: () => void;
+  reject: (reason: Error) => void;
+  settled: boolean;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
 interface Inflight {
   readonly attempt: ConnectionAttempt;
-  readonly promise: Promise<void>;
-  readonly resolve: () => void;
-  readonly reject: (reason: Error) => void;
+  readonly subscribers: Set<Subscriber>;
   settled: boolean;
 }
 
 export class SshSession {
-  private active: ConnectionAttempt | null = null;
-  private inflight: Inflight | null = null;
-  private nextId = 0;
-  private lastShellWindow: ShellPtyOptions | null = null;
+  readonly #opts: ResolvedOptions;
+  readonly #clientFactory: Ssh2ClientFactory;
+  #active: ConnectionAttempt | null = null;
+  #inflight: Inflight | null = null;
+  #nextId = 0;
+  #lastShellWindow: ShellPtyOptions | null = null;
 
   constructor(
-    private readonly opts: ResolvedOptions,
-    private readonly clientFactory: Ssh2ClientFactory = () => new Client() as unknown as Ssh2ClientLike,
-  ) {}
+    opts: ResolvedOptions,
+    clientFactory: Ssh2ClientFactory = () => new Client() as unknown as Ssh2ClientLike,
+  ) {
+    this.#opts = opts;
+    this.#clientFactory = clientFactory;
+  }
 
   get isOpen(): boolean {
-    const active = this.active;
+    const active = this.#active;
 
     return active !== null && !active.tornDown && active.stream !== null && active.io !== null;
   }
 
   get shellWindow(): ShellPtyOptions | null {
-    return this.lastShellWindow;
+    return this.#lastShellWindow;
   }
 
   getIo(): ShellIo {
-    if (!this.active?.io || this.active.tornDown) {
+    if (!this.#active?.io || this.#active.tornDown) {
       throw new SshClientError('closed', 'not connected');
     }
 
-    return this.active.io;
+    return this.#active.io;
   }
 
   getStream(): ShellChannelLike {
-    if (!this.active?.stream || this.active.tornDown) {
+    if (!this.#active?.stream || this.#active.tornDown) {
       throw new SshClientError('closed', 'not connected');
     }
 
-    return this.active.stream;
+    return this.#active.stream;
   }
 
   connect(signal?: AbortSignal): Promise<void> {
@@ -113,60 +129,59 @@ export class SshSession {
       return Promise.resolve();
     }
 
-    if (this.inflight) {
-      return this.inflight.promise;
+    if (this.#inflight) {
+      return this.subscribe(this.#inflight, signal);
+    }
+
+    if (signal?.aborted) {
+      // The caller never reaches connect(), but the attempt still has to be ended.
+      const attempt = this.createAttempt();
+      this.teardown(attempt);
+      return Promise.reject(new SshClientError('closed', 'aborted'));
     }
 
     const attempt = this.createAttempt();
-    let resolveInflight: () => void = () => undefined;
-    let rejectInflight: (reason: Error) => void = () => undefined;
-    const promise = new Promise<void>((resolve, reject) => {
-      resolveInflight = resolve;
-      rejectInflight = reject;
-    });
-    const inflight: Inflight = {
-      attempt,
-      promise,
-      resolve: resolveInflight,
-      reject: rejectInflight,
-      settled: false,
-    };
+    const inflight: Inflight = { attempt, subscribers: new Set(), settled: false };
+    this.#inflight = inflight;
+    const promise = this.subscribe(inflight, signal);
 
-    this.inflight = inflight;
-    this.openAttempt(attempt, signal);
+    if (inflight.subscribers.size === 0) {
+      this.#inflight = null;
+      return promise;
+    }
+
+    this.openAttempt(attempt);
 
     return promise;
   }
 
   async disconnect(): Promise<void> {
-    const active = this.active;
+    const attempts: ConnectionAttempt[] = [];
 
-    if (active?.stream && !active.tornDown) {
-      try {
-        active.stream.write('exit\r');
-      } catch {
-        /* best-effort exit */
-      }
+    if (this.#inflight && !this.#inflight.settled) {
+      attempts.push(this.#inflight.attempt);
+      this.failInflight(this.#inflight.attempt, 'closed', 'disconnected during connect');
     }
 
-    if (this.inflight && !this.inflight.settled) {
-      this.failInflight(this.inflight.attempt, 'closed', 'disconnected during connect');
+    if (this.#active && !this.#active.tornDown) {
+      attempts.push(this.#active);
+      this.teardown(this.#active);
     }
 
-    if (this.active && !this.active.tornDown) {
-      this.teardown(this.active);
-    }
+    await Promise.all(attempts.map((attempt) => attempt.endPromise ?? Promise.resolve()));
   }
 
   private createAttempt(): ConnectionAttempt {
     return {
-      id: ++this.nextId,
-      client: this.clientFactory(),
-      deadline: Date.now() + this.opts.readyTimeoutMs,
+      id: ++this.#nextId,
+      client: this.#clientFactory(),
+      deadline: performance.now() + this.#opts.readyTimeoutMs,
       stream: null,
       io: null,
       tornDown: false,
       clientEnded: false,
+      hostKeyRejected: false,
+      shellWindow: null,
       shellTimer: null,
       onReady: () => undefined,
       onError: () => undefined,
@@ -175,10 +190,42 @@ export class SshSession {
   }
 
   private remaining(attempt: ConnectionAttempt): number {
-    return Math.max(0, attempt.deadline - Date.now());
+    return Math.max(0, attempt.deadline - performance.now());
   }
 
-  private openAttempt(attempt: ConnectionAttempt, signal?: AbortSignal): void {
+  private subscribe(inflight: Inflight, signal?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (inflight.settled) {
+        reject(new SshClientError('closed', 'disconnected'));
+        return;
+      }
+
+      if (signal?.aborted) {
+        reject(new SshClientError('closed', 'aborted'));
+        return;
+      }
+
+      const subscriber: Subscriber = { resolve, reject, settled: false, signal };
+      const onAbort = (): void => {
+        this.onSubscriberAbort(inflight, subscriber);
+      };
+
+      subscriber.onAbort = onAbort;
+      inflight.subscribers.add(subscriber);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private onSubscriberAbort(inflight: Inflight, subscriber: Subscriber): void {
+    this.settleOne(subscriber, new SshClientError('closed', 'aborted'));
+    inflight.subscribers.delete(subscriber);
+
+    if (!inflight.settled && inflight.subscribers.size === 0) {
+      this.failInflight(inflight.attempt, 'closed', 'aborted');
+    }
+  }
+
+  private openAttempt(attempt: ConnectionAttempt): void {
     attempt.onReady = (): void => {
       this.onClientReady(attempt);
     };
@@ -192,24 +239,7 @@ export class SshSession {
     attempt.client.on('ready', attempt.onReady);
     attempt.client.on('error', attempt.onError);
     attempt.client.on('close', attempt.onClose);
-
-    if (signal) {
-      const onAbort = (): void => {
-        this.failInflight(attempt, 'closed', 'aborted');
-      };
-
-      if (signal.aborted) {
-        this.failInflight(attempt, 'closed', 'aborted');
-        return;
-      }
-
-      signal.addEventListener('abort', onAbort, { once: true });
-      attempt.removeAbort = (): void => {
-        signal.removeEventListener('abort', onAbort);
-      };
-    }
-
-    attempt.client.connect(this.connectConfig());
+    attempt.client.connect(this.connectConfig(attempt));
   }
 
   private onClientReady(attempt: ConnectionAttempt): void {
@@ -232,8 +262,8 @@ export class SshSession {
       this.failInflight(attempt, 'timeout', this.readyTimeoutMessage());
     }, this.remaining(attempt));
 
-    const window = ptyOptions(this.opts);
-    this.lastShellWindow = window;
+    const window = ptyOptions(this.#opts);
+    attempt.shellWindow = window;
     attempt.client.shell(window, (err, stream) => {
       this.onShell(attempt, err, stream);
     });
@@ -260,7 +290,7 @@ export class SshSession {
       return;
     }
 
-    const inflight = this.inflight;
+    const inflight = this.#inflight;
 
     if (!stream || !inflight) {
       return;
@@ -268,9 +298,11 @@ export class SshSession {
 
     attempt.stream = stream;
     attempt.io = new ShellIo(stream, {
-      promptRegex: this.opts.promptRegex,
-      settleMs: this.opts.settleMs,
-      idleBufferMaxBytes: this.opts.idleBufferMaxBytes,
+      promptRegex: this.#opts.promptRegex,
+      settleMs: this.#opts.settleMs,
+      idleBufferMaxBytes: this.#opts.idleBufferMaxBytes,
+      maxPromptLength: this.#opts.maxPromptLength,
+      maxOutputBytes: this.#opts.maxOutputBytes,
       onDead: () => {
         this.apply(attempt, decideAttempt(this.snapshot(attempt), { type: 'shell-dead' }));
       },
@@ -287,41 +319,38 @@ export class SshSession {
 
     void attempt.io
       .waitForReady({
-        promptRegex: this.opts.promptRegex,
-        settleMs: this.opts.settleMs,
+        promptRegex: this.#opts.promptRegex,
+        settleMs: this.#opts.settleMs,
         timeoutMs: left,
         timeoutMessage: this.readyTimeoutMessage(),
         readyPoke: true,
-        maxOutputBytes: this.opts.maxOutputBytes,
+        maxOutputBytes: this.#opts.maxOutputBytes,
       })
       .then(() => {
         this.finishOk(attempt, inflight);
       })
       .catch((error: unknown) => {
-        const code =
-          error instanceof SshClientError && (error.code === 'timeout' || error.code === 'invalid')
-            ? error.code
-            : 'connect';
-        const message = error instanceof SshClientError ? error.message : errorMessage(error);
+        const code = error instanceof SshClientError && READY_PASSTHROUGH.has(error.code) ? error.code : 'connect';
+        const message = error instanceof SshClientError ? error.message : messageOf(error);
 
-        this.apply(
-          attempt,
-          decideAttempt(this.snapshot(attempt), { type: 'ready-result', code, message }),
-        );
+        this.apply(attempt, decideAttempt(this.snapshot(attempt), { type: 'ready-result', code, message }));
       });
   }
 
   private onClientError(attempt: ConnectionAttempt, err: unknown): void {
-    const message = errorMessage(err);
+    const message = messageOf(err);
+    const effect = decideAttempt(this.snapshot(attempt), {
+      type: 'client-error',
+      code: classifyConnectError(err, attempt.hostKeyRejected),
+      message,
+    });
 
-    this.apply(
-      attempt,
-      decideAttempt(this.snapshot(attempt), {
-        type: 'client-error',
-        code: classifyConnectError(message),
-        message,
-      }),
-    );
+    if (effect.type === 'fail') {
+      this.failInflight(attempt, effect.code, effect.message, err);
+      return;
+    }
+
+    this.apply(attempt, effect);
   }
 
   private onClientClose(attempt: ConnectionAttempt): void {
@@ -329,13 +358,13 @@ export class SshSession {
   }
 
   private snapshot(attempt: ConnectionAttempt): AttemptSnapshot {
-    const inflight = this.inflight?.attempt === attempt ? this.inflight : null;
+    const inflight = this.#inflight?.attempt === attempt ? this.#inflight : null;
 
     return {
       tornDown: attempt.tornDown,
       isInflight: inflight !== null,
       inflightSettled: inflight?.settled ?? false,
-      isActive: this.active === attempt,
+      isActive: this.#active === attempt,
     };
   }
 
@@ -379,31 +408,64 @@ export class SshSession {
   }
 
   private finishOk(attempt: ConnectionAttempt, inflight: Inflight): void {
-    if (attempt.tornDown || inflight.settled || this.inflight !== inflight) {
+    if (attempt.tornDown || inflight.settled || this.#inflight !== inflight) {
       return;
     }
 
     inflight.settled = true;
-    attempt.removeAbort?.();
-    attempt.removeAbort = undefined;
-    this.inflight = null;
-    this.active = attempt;
-    inflight.resolve();
+    this.#inflight = null;
+    this.#active = attempt;
+
+    if (attempt.shellWindow) {
+      this.#lastShellWindow = attempt.shellWindow;
+    }
+
+    for (const subscriber of [...inflight.subscribers]) {
+      this.settleOne(subscriber);
+    }
+
+    inflight.subscribers.clear();
   }
 
-  private failInflight(attempt: ConnectionAttempt, code: SshErrorCode, message: string): void {
-    const inflight = this.inflight?.attempt === attempt ? this.inflight : null;
+  private failInflight(attempt: ConnectionAttempt, code: SshErrorCode, message: string, cause?: unknown): void {
+    const inflight = this.#inflight?.attempt === attempt ? this.#inflight : null;
 
     if (inflight && !inflight.settled) {
       inflight.settled = true;
+      const error = new SshClientError(code, message, cause === undefined ? undefined : { cause });
+      const subscribers = [...inflight.subscribers];
+      inflight.subscribers.clear();
       this.teardown(attempt);
-      inflight.reject(new SshClientError(code, message));
+
+      for (const subscriber of subscribers) {
+        this.settleOne(subscriber, error);
+      }
+
       return;
     }
 
-    if (this.active === attempt && !attempt.tornDown) {
+    if (this.#active === attempt && !attempt.tornDown) {
       this.teardown(attempt);
     }
+  }
+
+  private settleOne(subscriber: Subscriber, error?: Error): void {
+    if (subscriber.settled) {
+      return;
+    }
+
+    subscriber.settled = true;
+
+    if (subscriber.signal && subscriber.onAbort) {
+      subscriber.signal.removeEventListener('abort', subscriber.onAbort);
+    }
+
+    if (error) {
+      subscriber.reject(error);
+      return;
+    }
+
+    subscriber.resolve();
   }
 
   private teardown(attempt: ConnectionAttempt): void {
@@ -431,10 +493,7 @@ export class SshSession {
       attempt.shellTimer = null;
     }
 
-    attempt.removeAbort?.();
-    attempt.removeAbort = undefined;
-
-    // ssh2 emits `error` after `end()` returns. Removing this listener makes that error uncaught.
+    // ssh2 emits `error` after `end()` returns. Keep this listener.
     const swallow: ClientListener = (): void => undefined;
     attempt.client.on('error', swallow);
 
@@ -449,12 +508,12 @@ export class SshSession {
     this.endClient(attempt);
     attempt.stream = null;
 
-    if (this.active === attempt) {
-      this.active = null;
+    if (this.#active === attempt) {
+      this.#active = null;
     }
 
-    if (this.inflight?.attempt === attempt) {
-      this.inflight = null;
+    if (this.#inflight?.attempt === attempt) {
+      this.#inflight = null;
     }
   }
 
@@ -464,39 +523,58 @@ export class SshSession {
     }
 
     attempt.clientEnded = true;
+    attempt.endPromise = new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = (): void => {
+        if (finished) {
+          return;
+        }
 
-    try {
-      attempt.client.end();
-    } catch {
-      /* ignore */
-    }
+        finished = true;
+        clearTimeout(timer);
+        attempt.client.removeListener('close', onClose);
+        resolve();
+      };
+      const onClose: ClientListener = (): void => {
+        finish();
+      };
+      const timer = setTimeout(finish, CLOSE_WAIT_MS);
+
+      attempt.client.on('close', onClose);
+
+      try {
+        attempt.client.end();
+      } catch {
+        finish();
+      }
+    });
   }
 
   private readyTimeoutMessage(): string {
-    return `ready prompt timed out after ${this.opts.readyTimeoutMs}ms`;
+    return `ready prompt timed out after ${this.#opts.readyTimeoutMs}ms`;
   }
 
-  private connectConfig(): Ssh2ConnectConfig {
+  private connectConfig(attempt: ConnectionAttempt): Ssh2ConnectConfig {
     const config: Ssh2ConnectConfig = {
-      host: this.opts.host,
-      port: this.opts.port,
-      username: this.opts.username,
-      password: this.opts.password,
-      readyTimeout: this.opts.readyTimeoutMs,
+      host: this.#opts.host,
+      port: this.#opts.port,
+      username: this.#opts.username,
+      password: this.#opts.password,
+      readyTimeout: this.#opts.readyTimeoutMs,
     };
 
-    if (!this.opts.insecureSkipVerify) {
-      config.hostVerifier = (key: Buffer): boolean => hostKeyMatches(this.opts.hostFingerprint!, key);
+    if (!this.#opts.insecureSkipVerify && this.#opts.hostFingerprint) {
+      config.hostVerifier = (key: Buffer): boolean => {
+        const matches = hostKeyMatches(this.#opts.hostFingerprint!, key);
+
+        if (!matches) {
+          attempt.hostKeyRejected = true;
+        }
+
+        return matches;
+      };
     }
 
     return config;
   }
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-
-  return String(err);
 }
