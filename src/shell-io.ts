@@ -168,8 +168,16 @@ export class ShellIo {
       try {
         await this.resyncing;
       } catch {
+        if (signal?.aborted) {
+          throw new SshClientError('closed', 'aborted');
+        }
+
         throw new SshClientError('closed', 'resync failed');
       }
+    }
+
+    if (signal?.aborted) {
+      throw new SshClientError('closed', 'aborted');
     }
 
     if (this.resyncFailed || this.detached) {

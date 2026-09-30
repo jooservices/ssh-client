@@ -164,17 +164,14 @@ function stripFinalPrompt(text: string, promptLine: string): string {
     return text;
   }
 
-  if (text === promptLine) {
-    return '';
+  const cut = text.lastIndexOf('\n');
+  const last = text.slice(cut + 1);
+
+  if (applyCrLine(last) !== promptLine) {
+    return text;
   }
 
-  const suffix = `\n${promptLine}`;
-
-  if (text.endsWith(suffix)) {
-    return text.slice(0, -suffix.length);
-  }
-
-  return text;
+  return cut < 0 ? '' : text.slice(0, cut);
 }
 
 function stripEcho(text: string, command: string, previousPrompt: string, promptLine: string): string {

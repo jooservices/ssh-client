@@ -296,6 +296,25 @@ describe('ShellIo extras', () => {
     io.detach();
   });
 
+  it('does not write a command aborted while resync is still running', async () => {
+    const channel = new FakeSsh2Channel({ prompt, ignoreInterrupt: true });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const limits = { commandTimeoutMs: 30, maxPages: 2, maxOutputBytes: 1_000_000, settleMs: 0 };
+    const controller = new AbortController();
+    const command = `cancelled ${randomUUID()}`;
+
+    await expect(io.runCommand(`stuck ${randomUUID()}`, limits)).rejects.toMatchObject({ code: 'timeout' });
+
+    const run = io.runCommand(command, { ...limits, commandTimeoutMs: 500 }, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    channel.emitText(`\n${prompt}`);
+
+    await expect(run).rejects.toMatchObject({ code: 'closed', message: 'aborted' });
+    expect(channel.writes.some((entry) => String(entry).includes(command))).toBe(false);
+    io.detach();
+  });
+
   it('rejects a command whose signal is already aborted', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });

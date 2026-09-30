@@ -143,6 +143,7 @@ describe('cleanOutput', () => {
     expect(cleanOutput(`a\r\nb\rc\n${prompt}`, 'noop', prompt)).toBe('a\nc');
     expect(cleanOutput(`50%\r100%\n${prompt}`, 'noop', prompt)).toBe('100%');
     expect(cleanOutput(`a\r\r\nb\n${prompt}`, 'noop', prompt)).toBe('a\nb');
+    expect(cleanOutput(`value\r\n\r${prompt}`, 'show', prompt)).toBe('value');
   });
 
   it('strips echo when the prompt changed and a wrapped line', () => {
