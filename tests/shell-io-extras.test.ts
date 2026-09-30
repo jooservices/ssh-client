@@ -185,6 +185,37 @@ describe('ShellIo extras', () => {
     io.detach();
   });
 
+  it('answers a pager marker repainted after a carriage return', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const marker = "--- MORE ---   ['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page] --- ";
+    const last = `last ${randomUUID()}`;
+    const original = channel.write.bind(channel);
+    let spaces = 0;
+    channel.write = (data) => {
+      if (String(data) === ' ') {
+        channel.writes.push(data);
+        spaces += 1;
+        channel.emitText(spaces === 1 ? `\r${marker}` : `\r\n${last}\r\n${prompt}`);
+        return true;
+      }
+
+      return original(data);
+    };
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const command = `wan status ${randomUUID()}`;
+    const run = io.runCommand(command, {
+      commandTimeoutMs: 500,
+      maxPages: 5,
+      maxOutputBytes: 1_000_000,
+      settleMs: 0,
+    }, { idleTimeoutMs: 200 });
+    channel.emitText(`${command}\r\nfirst\r\n--- MORE ---`);
+
+    await expect(run).resolves.toContain(last);
+    expect(spaces).toBe(2);
+    io.detach();
+  });
+
   it('rejects when the channel closes mid-command with a string reason', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });

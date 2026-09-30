@@ -20,7 +20,7 @@ export class OutputAccumulator {
   private decoder = new StringDecoder('utf8');
   private ansi: AnsiCarry = { state: 'text' };
   byteLength = 0;
-  /** Increments on every newline so a later pager marker is a new line. */
+  /** Increments on every newline or CR repaint so a later pager marker is a new line. */
   lineEpoch = 0;
 
   constructor(private readonly maxPromptLength = 256) {}
@@ -124,6 +124,7 @@ export class OutputAccumulator {
         this.parts.push('\r'.repeat(this.pendingCr));
         this.col = 0;
         this.pendingCr = 0;
+        this.lineEpoch += 1;
       }
 
       run += ch;
