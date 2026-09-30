@@ -151,6 +151,40 @@ describe('ShellIo extras', () => {
     io.detach();
   });
 
+  it('pages through the DrayOS marker and returns every page without the key hint', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const marker = "--- MORE ---   ['q': Quit, 'Enter': New Lines, 'Space Bar': Next Page] --- ";
+    const first = `first ${randomUUID()}`;
+    const second = `second ${randomUUID()}`;
+    const original = channel.write.bind(channel);
+    channel.write = (data) => {
+      if (String(data) === ' ') {
+        channel.writes.push(data);
+        channel.emitText(`\r\n${second}\r\n${prompt}`);
+        return true;
+      }
+
+      return original(data);
+    };
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const command = `wan status ${randomUUID()}`;
+    const run = io.runCommand(command, {
+      commandTimeoutMs: 500,
+      maxPages: 5,
+      maxOutputBytes: 1_000_000,
+      settleMs: 0,
+    }, { idleTimeoutMs: 200 });
+    channel.emitText(`${command}\r\n${first}\r\n${marker}`);
+
+    const output = await run;
+    expect(channel.writes.filter((data) => String(data) === ' ')).toHaveLength(1);
+    expect(output).toContain(first);
+    expect(output).toContain(second);
+    expect(output).not.toContain('MORE');
+    expect(output).not.toContain('Space Bar');
+    io.detach();
+  });
+
   it('rejects when the channel closes mid-command with a string reason', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
