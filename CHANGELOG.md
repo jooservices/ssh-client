@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-29
+
 ### Added
 
 - `SshClientError` codes `hostkey` (pinned host key rejected) and `limit` (output or pager cap).
@@ -34,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A socket error that arrives after the SSH client is closed no longer becomes an uncaught exception.
+- A prompt redrawn with a leading CR is removed from `stdout`.
+- A command aborted while resync is still running is not written to the shell.
 
 ## [1.1.0] - 2026-09-29
 
