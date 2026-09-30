@@ -12,18 +12,25 @@ export interface SshClientOptions {
   settleMs?: number;
   /**
    * Optional full-line prompt matcher for hosts whose prompt changes.
-   * A match counts only when it covers the entire current line.
+   * The pattern is anchored to the whole line (`g`, `y`, and `m` are ignored).
    * When omitted, the line captured at the first ready prompt is matched exactly.
    */
   promptRegex?: RegExp;
-  /** PTY term type for interactive shell (default `vt100`). */
+  /** PTY term type for interactive shell (default `vt100`). Letters, digits, and hyphens, 1–32. */
   term?: string;
   /** PTY rows (default `200`). */
   rows?: number;
   /** PTY cols (default `200`). */
   cols?: number;
-  /** Cap for unsolicited data between commands (default 64 KiB). */
+  /**
+   * @deprecated Accepted and ignored. Unsolicited data between commands is discarded.
+   */
   idleBufferMaxBytes?: number;
+  /**
+   * Longest line scanned for a prompt or pager marker (default 256, range 16–4096).
+   * Longer lines are still returned; they are not treated as a prompt.
+   */
+  maxPromptLength?: number;
 }
 
 export interface ExecOptions {

@@ -1,4 +1,4 @@
-import type { SshErrorCode } from './errors.js';
+import { messageOf, type SshErrorCode } from './errors.js';
 
 /** What the session knows about one attempt when an event arrives. */
 export interface AttemptSnapshot {
@@ -88,7 +88,30 @@ export function decideAttempt(snapshot: AttemptSnapshot, event: TransportEvent):
   }
 }
 
-export function classifyConnectError(message: string): 'connect' | 'auth' | 'timeout' {
+export function classifyConnectError(
+  err: unknown,
+  hostKeyRejected = false,
+): 'connect' | 'auth' | 'timeout' | 'hostkey' {
+  if (hostKeyRejected) {
+    return 'hostkey';
+  }
+
+  const level = levelOf(err);
+
+  if (level === 'client-authentication' || level === 'agent') {
+    return 'auth';
+  }
+
+  if (level === 'client-timeout') {
+    return 'timeout';
+  }
+
+  if (level === 'client-socket' || level === 'handshake' || level === 'protocol') {
+    return 'connect';
+  }
+
+  const message = typeof err === 'string' ? err : messageOf(err);
+
   if (/timed out/i.test(message)) {
     return 'timeout';
   }
@@ -98,6 +121,16 @@ export function classifyConnectError(message: string): 'connect' | 'auth' | 'tim
   }
 
   return 'connect';
+}
+
+function levelOf(err: unknown): string {
+  if (typeof err !== 'object' || err === null || !('level' in err)) {
+    return '';
+  }
+
+  const level = err.level;
+
+  return typeof level === 'string' ? level : '';
 }
 
 function isStaleConnect(snapshot: AttemptSnapshot): boolean {

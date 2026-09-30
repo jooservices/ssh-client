@@ -51,11 +51,11 @@ describe('SshSession', () => {
     expect(fake.hostVerifierKeys).toEqual([]);
   });
 
-  it('maps host-key mismatch to connect and leaves the session closed', async () => {
+  it('maps host-key mismatch to hostkey and leaves the session closed', async () => {
     const fake = new FakeSsh2Client({ hostKey: Buffer.from('unexpected-host-key') });
     const session = sessionWith(fake);
 
-    await expect(session.connect()).rejects.toMatchObject({ code: 'connect' });
+    await expect(session.connect()).rejects.toMatchObject({ code: 'hostkey' });
     expect(session.isOpen).toBe(false);
     expect(fake.ended).toBe(true);
   });

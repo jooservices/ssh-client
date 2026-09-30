@@ -394,7 +394,7 @@ describe('SshSession races', () => {
     const session = sessionWith(fake, { maxOutputBytes: 8 });
 
     await expect(session.connect()).rejects.toMatchObject({
-      code: 'invalid',
+      code: 'limit',
       message: 'command output exceeded maxOutputBytes=8',
     });
     expect(session.isOpen).toBe(false);
@@ -433,5 +433,55 @@ describe('SshSession races', () => {
 
     expect(session.isOpen).toBe(false);
     expect(fake.listenerCount('error')).toBe(1);
+  });
+
+  it('keeps the shared connect when only one caller aborts', async () => {
+    const fake = new FakeSsh2Client({ hostKey, deferConnect: true });
+    const session = sessionWith(fake);
+    const controller = new AbortController();
+    const aborted = session.connect(controller.signal);
+    const kept = session.connect();
+
+    controller.abort();
+    await expect(aborted).rejects.toMatchObject({ code: 'closed', message: 'aborted' });
+    fake.releaseConnect();
+    await kept;
+
+    expect(session.isOpen).toBe(true);
+    expect(fake.endCount).toBe(0);
+  });
+
+  it('rejects only the caller that joins a connect with an aborted signal', async () => {
+    const fake = new FakeSsh2Client({ hostKey, deferConnect: true });
+    const session = sessionWith(fake);
+    const pending = session.connect();
+    const controller = new AbortController();
+
+    controller.abort();
+
+    await expect(session.connect(controller.signal)).rejects.toMatchObject({
+      code: 'closed',
+      message: 'aborted',
+    });
+    fake.releaseConnect();
+    await pending;
+
+    expect(session.isOpen).toBe(true);
+    expect(fake.endCount).toBe(0);
+  });
+
+  it('disconnect resolves when end emits close and then throws', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+
+    await session.connect();
+    fake.end = (): void => {
+      fake.emitClose();
+      throw new Error('end failed');
+    };
+
+    await session.disconnect();
+
+    expect(session.isOpen).toBe(false);
   });
 });

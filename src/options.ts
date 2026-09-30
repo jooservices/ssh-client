@@ -1,5 +1,6 @@
 import { SshClientError } from './errors.js';
-import { normalizePromptRegex } from './prompt.js';
+import { parseFingerprint } from './host-key.js';
+import { compilePromptRegex } from './prompt.js';
 import type { ExecOptions, ShellPtyOptions, SshClientOptions } from './public-types.js';
 
 export interface ResolvedOptions {
@@ -18,7 +19,9 @@ export interface ResolvedOptions {
   term: string;
   rows: number;
   cols: number;
+  /** Accepted and ignored. Idle output is discarded. */
   idleBufferMaxBytes: number;
+  maxPromptLength: number;
 }
 
 export interface ResolvedExecOptions {
@@ -38,6 +41,7 @@ export const LIMITS = {
   rows: { min: 1, max: 10_000 },
   cols: { min: 1, max: 10_000 },
   idleBufferMaxBytes: { min: 1_024, max: 67_108_864 },
+  maxPromptLength: { min: 16, max: 4_096 },
   timeoutMs: { min: 1, max: 600_000 },
   idleTimeoutMs: { min: 1, max: 600_000 },
 } as const;
@@ -53,9 +57,30 @@ export const DEFAULTS = {
   rows: 200,
   cols: 200,
   idleBufferMaxBytes: 64 * 1024,
+  maxPromptLength: 256,
 } as const;
 
+export const INTERRUPT = '\u0003';
+export const KILL_LINE = '\u0015';
+
+const TERM_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/iu;
+const CONTROL_PATTERN = /[\u0000-\u001f\u007f]/u;
+
 export const RESYNC_TIMEOUT_MS = 5_000;
+
+export function validateCommand(command: string): string {
+  if (CONTROL_PATTERN.test(command)) {
+    throw new SshClientError('invalid', 'command must be a single line without control characters');
+  }
+
+  const trimmed = command.trim();
+
+  if (!trimmed) {
+    throw new SshClientError('invalid', 'command is empty');
+  }
+
+  return trimmed;
+}
 
 export function requireFiniteInt(name: string, value: number, min: number, max: number): void {
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
@@ -77,11 +102,13 @@ export function resolveOptions(input: SshClientOptions): ResolvedOptions {
   }
 
   const insecureSkipVerify = input.insecureSkipVerify === true;
-  const hostFingerprint = input.hostFingerprint?.trim() || null;
+  const rawFingerprint = input.hostFingerprint?.trim() || null;
 
-  if (!insecureSkipVerify && !hostFingerprint) {
+  if (!insecureSkipVerify && !rawFingerprint) {
     throw new SshClientError('invalid', 'hostFingerprint is required unless insecureSkipVerify is true');
   }
+
+  const hostFingerprint = rawFingerprint ? parseFingerprint(rawFingerprint) : null;
 
   const port = input.port ?? DEFAULTS.port;
   const readyTimeoutMs = input.readyTimeoutMs ?? DEFAULTS.readyTimeoutMs;
@@ -92,6 +119,8 @@ export function resolveOptions(input: SshClientOptions): ResolvedOptions {
   const rows = input.rows ?? DEFAULTS.rows;
   const cols = input.cols ?? DEFAULTS.cols;
   const idleBufferMaxBytes = input.idleBufferMaxBytes ?? DEFAULTS.idleBufferMaxBytes;
+  const maxPromptLength = input.maxPromptLength ?? DEFAULTS.maxPromptLength;
+  const term = input.term ?? DEFAULTS.term;
 
   requireFiniteInt('port', port, LIMITS.port.min, LIMITS.port.max);
   requireFiniteInt('readyTimeoutMs', readyTimeoutMs, LIMITS.readyTimeoutMs.min, LIMITS.readyTimeoutMs.max);
@@ -107,6 +136,11 @@ export function resolveOptions(input: SshClientOptions): ResolvedOptions {
     LIMITS.idleBufferMaxBytes.min,
     LIMITS.idleBufferMaxBytes.max,
   );
+  requireFiniteInt('maxPromptLength', maxPromptLength, LIMITS.maxPromptLength.min, LIMITS.maxPromptLength.max);
+
+  if (!TERM_PATTERN.test(term)) {
+    throw new SshClientError('invalid', 'term must be 1-32 letters, digits, or hyphens');
+  }
 
   return {
     host: input.host.trim(),
@@ -120,11 +154,12 @@ export function resolveOptions(input: SshClientOptions): ResolvedOptions {
     maxPages,
     maxOutputBytes,
     settleMs,
-    promptRegex: input.promptRegex ? normalizePromptRegex(input.promptRegex) : null,
-    term: input.term ?? DEFAULTS.term,
+    promptRegex: input.promptRegex ? compilePromptRegex(input.promptRegex) : null,
+    term,
     rows,
     cols,
     idleBufferMaxBytes,
+    maxPromptLength,
   };
 }
 

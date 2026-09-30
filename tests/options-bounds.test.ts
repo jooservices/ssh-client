@@ -7,7 +7,7 @@ const validOptions: SshClientOptions = {
   host: 'router.local',
   username: 'admin',
   password: 'secret',
-  hostFingerprint: 'SHA256:abc123',
+  hostFingerprint: `SHA256:${'A'.repeat(43)}`,
 };
 
 describe('option bounds', () => {
@@ -22,6 +22,7 @@ describe('option bounds', () => {
       ['rows', 1, 10_000],
       ['cols', 1, 10_000],
       ['idleBufferMaxBytes', 1_024, 67_108_864],
+      ['maxPromptLength', 16, 4_096],
     ];
 
     for (const [field, min, max] of fields) {

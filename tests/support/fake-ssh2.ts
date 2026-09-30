@@ -15,6 +15,10 @@ export interface FakeSsh2ClientOptions {
   deferShell?: boolean;
   deferConnect?: boolean;
   ignoreBareCr?: boolean;
+  /** When set, Ctrl-C does not return the channel to its prompt. */
+  ignoreInterrupt?: boolean;
+  /** Delay the `close` event after `end()` so disconnect has to wait. */
+  closeDelayMs?: number;
   channel?: FakeSsh2Channel;
   banner?: string;
   initialPrompt?: string;
@@ -32,12 +36,15 @@ export interface FakeCommandScript {
   channelEvent?: 'close' | 'end' | 'error';
   channelError?: Error;
   clientClose?: boolean;
+  /** Emit a running line and stay busy until Ctrl-C. */
+  busyUntilInterrupt?: boolean;
 }
 
 export interface FakeSsh2ChannelOptions {
   commands?: Record<string, FakeCommandScript>;
   prompt?: string;
   ignoreBareCr?: boolean;
+  ignoreInterrupt?: boolean;
   onClientClose?: () => void;
 }
 
@@ -48,6 +55,7 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
   private pendingChunks: string[] | null = null;
   private pendingPrompt: string | null = null;
   private pendingEcho: string | null = null;
+  private busy = false;
 
   constructor(private readonly options: FakeSsh2ChannelOptions = {}) {
     super();
@@ -57,6 +65,25 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     this.writes.push(data);
 
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+
+    if (text.includes('\u0003')) {
+      if (this.options.ignoreInterrupt) {
+        return true;
+      }
+
+      this.busy = false;
+      this.pendingChunks = null;
+      this.emitText(this.options.prompt ?? '');
+      return true;
+    }
+
+    if (text === '\u0015\r' || text === '\u0015') {
+      if (!this.options.ignoreBareCr) {
+        this.emitText(this.options.prompt ?? '');
+      }
+
+      return true;
+    }
 
     if (text === ' ' && this.pendingChunks && this.pendingChunks.length > 0) {
       this.emitText(this.pendingChunks.shift()!);
@@ -69,6 +96,10 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     if (text === 'q' && this.pendingChunks) {
       this.pendingChunks = [];
       this.finishPendingCommand();
+      return true;
+    }
+
+    if (this.busy) {
       return true;
     }
 
@@ -89,6 +120,11 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
   close(): void {
     this.closed = true;
     this.emit('close');
+  }
+
+  /** Remember the prompt the shell just showed, so a later bare CR echoes that line. */
+  adoptPrompt(prompt: string): void {
+    this.options.prompt = prompt;
   }
 
   emitText(text: string): void {
@@ -131,6 +167,12 @@ export class FakeSsh2Channel extends EventEmitter implements ShellChannelLike {
     const emit = (): void => {
       if (script.echo !== false) {
         this.emitText(`${command}\r\n`);
+      }
+
+      if (script.busyUntilInterrupt) {
+        this.busy = true;
+        this.emitText('still running\n');
+        return;
       }
 
       if (script.channelEvent) {
@@ -208,8 +250,11 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
       new FakeSsh2Channel({
         commands: options.commands,
         onClientClose: () => this.emitClose(),
-        prompt: options.initialPrompt,
+        // Stay silent until the shell actually prints its prompt. A default here
+        // lets the ready poke complete a delayed banner before readyTimeoutMs.
+        prompt: options.promptOnPoke ? (options.initialPrompt ?? 'router# ') : options.initialPrompt,
         ignoreBareCr: options.ignoreBareCr,
+        ignoreInterrupt: options.ignoreInterrupt,
       });
   }
 
@@ -287,7 +332,9 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
 
       if (!this.options.shellError && !this.options.shellMissing) {
         const emitPrompt = (): void => {
-          this.channel.emitText(`${this.options.banner ?? ''}${this.options.initialPrompt ?? 'router# '}`);
+          const shown = this.options.initialPrompt ?? 'router# ';
+          this.channel.adoptPrompt(shown);
+          this.channel.emitText(`${this.options.banner ?? ''}${shown}`);
         };
 
         if (this.options.initialPromptDelayMs) {
@@ -325,6 +372,14 @@ export class FakeSsh2Client extends EventEmitter implements Ssh2ClientLike {
   end(): void {
     this.endCount += 1;
     this.ended = true;
+
+    if (this.options.closeDelayMs && this.options.closeDelayMs > 0) {
+      setTimeout(() => {
+        this.emitClose();
+      }, this.options.closeDelayMs);
+      return;
+    }
+
     this.emitClose();
   }
 

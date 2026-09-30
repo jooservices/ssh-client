@@ -110,7 +110,9 @@ describe('shell contract', () => {
 
     channel.emitText(`${command}\r\n${'x'.repeat(30)}--- MOR`);
     expect(channel.writes).not.toContain(' ');
-    channel.emitText(`E ---\nbar\n${prompt}`);
+    channel.emitText('E ---');
+    expect(channel.writes).toContain(' ');
+    channel.emitText(`\nbar\n${prompt}`);
 
     expect(channel.writes).toContain(' ');
     await expect(pending).resolves.toContain('bar');
@@ -143,7 +145,7 @@ describe('shell contract', () => {
     channel.emitChunk(Buffer.from('à'));
 
     await expect(pending).rejects.toMatchObject({
-      code: 'invalid',
+      code: 'limit',
       message: 'command output exceeded maxOutputBytes=1',
     });
     io.detach();
@@ -155,7 +157,7 @@ describe('shell contract', () => {
     const first = io.runCommand(`big ${randomUUID()}`, limits(4));
 
     channel.emitText('12345');
-    await expect(first).rejects.toMatchObject({ code: 'invalid' });
+    await expect(first).rejects.toMatchObject({ code: 'limit' });
 
     const next = `next ${randomUUID()}`;
     const second = io.runCommand(next, limits());
