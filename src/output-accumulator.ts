@@ -230,8 +230,8 @@ function matchWrapped(text: string, expected: string): number | null {
       return null;
     }
 
-    const current = text[textIndex] ?? '';
-    const wanted = expected[expectedIndex] ?? '';
+    const current = text.charAt(textIndex);
+    const wanted = expected.charAt(expectedIndex);
 
     if (current === wanted) {
       textIndex += current.length;
@@ -336,7 +336,7 @@ function stripAnsiChunk(text: string, carry: AnsiCarry): string {
   let out = '';
 
   for (let index = 0; index < text.length; index += 1) {
-    const ch = text[index] ?? '';
+    const ch = text.charAt(index);
     const code = text.charCodeAt(index);
 
     switch (carry.state) {
@@ -392,7 +392,7 @@ function stripAnsiChunk(text: string, carry: AnsiCarry): string {
       default: {
         const unreachable: never = carry.state;
 
-        return unreachable;
+        throw new TypeError(`Unexpected ANSI parser state: ${String(unreachable)}`);
       }
     }
   }

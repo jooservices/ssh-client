@@ -83,7 +83,7 @@ export function decideAttempt(snapshot: AttemptSnapshot, event: TransportEvent):
     default: {
       const unreachable: never = event;
 
-      return unreachable;
+      throw new TypeError(`Unexpected transport event: ${String((unreachable as { type?: unknown }).type)}`);
     }
   }
 }

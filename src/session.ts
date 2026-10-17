@@ -61,7 +61,7 @@ interface ConnectionAttempt {
   hostKeyRejected: boolean;
   shellWindow: ShellPtyOptions | null;
   shellTimer: ReturnType<typeof setTimeout> | null;
-  endPromise?: Promise<void>;
+  endPromise: Promise<void>;
   onReady: ClientListener;
   onError: ClientListener;
   onClose: ClientListener;
@@ -168,7 +168,7 @@ export class SshSession {
       this.teardown(this.#active);
     }
 
-    await Promise.all(attempts.map((attempt) => attempt.endPromise ?? Promise.resolve()));
+    await Promise.all(attempts.map((attempt) => attempt.endPromise));
   }
 
   private createAttempt(): ConnectionAttempt {
@@ -183,6 +183,7 @@ export class SshSession {
       hostKeyRejected: false,
       shellWindow: null,
       shellTimer: null,
+      endPromise: Promise.resolve(),
       onReady: () => undefined,
       onError: () => undefined,
       onClose: () => undefined,
@@ -390,7 +391,7 @@ export class SshSession {
       default: {
         const unreachable: never = effect;
 
-        return unreachable;
+        throw new TypeError(`Unexpected SSH attempt effect: ${String((unreachable as { type?: unknown }).type)}`);
       }
     }
   }

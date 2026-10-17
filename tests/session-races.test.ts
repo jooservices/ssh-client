@@ -3,6 +3,7 @@ import { fingerprintSha256 } from '../src/host-key.js';
 import { resolveOptions } from '../src/options.js';
 import type { SshClientOptions } from '../src/public-types.js';
 import { SshSession } from '../src/session.js';
+import { ShellIo } from '../src/shell-io.js';
 import { FakeSsh2Client } from './support/fake-ssh2.js';
 
 const hostKey = Buffer.from('session-race-host-key');
@@ -82,6 +83,22 @@ describe('SshSession races', () => {
     expect(fake.ended).toBe(true);
   });
 
+  it('maps an unexpected ready-wait rejection to connect', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+    const waitForReady = vi.spyOn(ShellIo.prototype, 'waitForReady').mockRejectedValue(new Error('unexpected prompt failure'));
+
+    try {
+      await expect(session.connect()).rejects.toMatchObject({
+        code: 'connect',
+        message: 'unexpected prompt failure',
+      });
+      expect(fake.ended).toBe(true);
+    } finally {
+      waitForReady.mockRestore();
+    }
+  });
+
   it('handshake consumes the budget', async () => {
     vi.useFakeTimers();
 
@@ -152,6 +169,27 @@ describe('SshSession races', () => {
     });
     expect(fake.connectConfig).toBeNull();
     expect(fake.ended).toBe(true);
+    expect(session.isOpen).toBe(false);
+  });
+
+  it('ends the attempt if abort fires while its subscriber listener is registered', async () => {
+    const fake = new FakeSsh2Client({ hostKey });
+    const session = sessionWith(fake);
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const addEventListener = signal.addEventListener.bind(signal);
+
+    Object.defineProperty(signal, 'addEventListener', {
+      configurable: true,
+      value: (...args: Parameters<AbortSignal['addEventListener']>) => {
+        addEventListener(...args);
+        controller.abort();
+      },
+    });
+
+    await expect(session.connect(signal)).rejects.toMatchObject({ code: 'closed', message: 'aborted' });
+    expect(fake.connectConfig).toBeNull();
+    expect(fake.endCount).toBe(1);
     expect(session.isOpen).toBe(false);
   });
 

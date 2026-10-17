@@ -422,6 +422,48 @@ describe('ShellIo extras', () => {
     io.detach();
   });
 
+  it('rejects a second command while the first command owns the shell', async () => {
+    const channel = new FakeSsh2Channel({ prompt });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const first = `first ${randomUUID()}`;
+    const run = io.runCommand(first, {
+      commandTimeoutMs: 500,
+      maxPages: 2,
+      maxOutputBytes: 1_000_000,
+      settleMs: 0,
+    });
+
+    await expect(
+      io.runCommand('second', {
+        commandTimeoutMs: 500,
+        maxPages: 2,
+        maxOutputBytes: 1_000_000,
+        settleMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid', message: 'another command is in flight' });
+    channel.emitText(`${first}\r\nok\n${prompt}`);
+    await expect(run).resolves.toContain('ok');
+    io.detach();
+  });
+
+  it('prefers abort when shell recovery fails while a command waits', async () => {
+    const channel = new FakeSsh2Channel({ prompt, ignoreInterrupt: true });
+    const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });
+    const limits = { commandTimeoutMs: 20, maxPages: 2, maxOutputBytes: 1_000_000, settleMs: 0 };
+
+    await expect(io.runCommand(`stuck ${randomUUID()}`, limits)).rejects.toMatchObject({ code: 'timeout' });
+
+    const controller = new AbortController();
+    const waiting = io.runCommand('waiting', { ...limits, commandTimeoutMs: 500 }, { signal: controller.signal });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    channel.close();
+
+    await expect(waiting).rejects.toMatchObject({ code: 'closed', message: 'aborted' });
+    io.detach();
+  });
+
   it('waits for resync before the next command writes', async () => {
     const channel = new FakeSsh2Channel({ prompt });
     const io = new ShellIo(channel, { promptIdentity: prompt, settleMs: 0, idleBufferMaxBytes: 64_000 });

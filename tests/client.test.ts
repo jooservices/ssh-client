@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SshClient, fingerprintSha256 } from '../src/index.js';
+import { SshSession } from '../src/session.js';
 import { FakeSsh2Client, type FakeSsh2ClientOptions } from './support/fake-ssh2.js';
 
 const fakeClients: FakeSsh2Client[] = [];
@@ -198,6 +199,25 @@ describe('SshClient', () => {
     expect(inspect(client, { depth: 10, showHidden: true })).not.toContain(password);
     expect(JSON.stringify(client)).not.toContain(password);
     expect(inspect(client.shellWindow)).not.toContain(password);
+  });
+
+  it('normalizes an unexpected non-Error connection rejection', async () => {
+    const connect = vi.spyOn(SshSession.prototype, 'connect').mockImplementation(() => Promise.reject('unexpected'));
+    const client = createClient();
+
+    try {
+      await expect(client.exec('show')).rejects.toMatchObject({ code: 'closed', message: 'unexpected' });
+    } finally {
+      connect.mockRestore();
+    }
+  });
+
+  it('maps a non-Error option validation failure to invalid', async () => {
+    const client = createClient();
+    const options = new Proxy({}, { get: () => { throw 'bad option'; } });
+
+    await expect(client.exec('show', options as never)).rejects.toMatchObject({ code: 'invalid', message: 'bad option' });
+    expect(client.connected).toBe(false);
   });
 });
 

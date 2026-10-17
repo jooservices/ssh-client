@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SshClient, fingerprintSha256 } from '../src/index.js';
+import { SshSession } from '../src/session.js';
 import { FakeSsh2Client, type FakeSsh2ClientOptions } from './support/fake-ssh2.js';
 
 const fakeClients: FakeSsh2Client[] = [];
@@ -228,6 +229,51 @@ describe('SshClient barrier', () => {
     expect(client.connected).toBe(false);
     expect(fake.ended).toBe(true);
   }, 8_000);
+
+  it('does not dispatch exec when abort wins as connect resolves', async () => {
+    const controller = new AbortController();
+    const connect = vi.spyOn(SshSession.prototype, 'connect').mockImplementation(() =>
+      new Promise((resolve) => {
+        setImmediate(() => {
+          resolve();
+          controller.abort();
+        });
+      }),
+    );
+    const client = createClient();
+
+    try {
+      await expect(client.exec('show', { signal: controller.signal })).rejects.toMatchObject({
+        code: 'closed',
+        message: 'aborted',
+      });
+    } finally {
+      connect.mockRestore();
+      await client.disconnect();
+    }
+  });
+
+  it('does not dispatch exec when disconnect wins as connect resolves', async () => {
+    let client: SshClient;
+    let disconnect: Promise<void> | undefined;
+    const connect = vi.spyOn(SshSession.prototype, 'connect').mockImplementation(() =>
+      new Promise((resolve) => {
+        setImmediate(() => {
+          resolve();
+          disconnect = client.disconnect();
+        });
+      }),
+    );
+    client = createClient();
+
+    try {
+      await expect(client.exec('show')).rejects.toMatchObject({ code: 'closed', message: 'disconnected' });
+      await disconnect;
+    } finally {
+      connect.mockRestore();
+      await client.disconnect();
+    }
+  });
 });
 
 function enqueueFake(options: FakeSsh2ClientOptions = {}): FakeSsh2Client {
