@@ -73,6 +73,10 @@ npm run ci         # lint + test types + coverage (aggregate ≥90%, per file �
 npm run test:e2e   # local and CI Docker Ubuntu sshd E2E — Docker daemon, OpenSSH client, openssl, Node 24.21
 ```
 
+The supported Node range is `>=24.21.0 <25`. The shared runtime's npm
+`11.19.1` is verified for this project's `package.json` `allowScripts` policy;
+compatibility with other npm versions has not been verified.
+
 Full embedder + operator guide: [`docs/usage.md`](./docs/usage.md).
 
 ## Security
