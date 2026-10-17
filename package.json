@@ -25,7 +25,7 @@
     "test:consumer": "node tools/consumer-smoke.mjs",
     "test:e2e": "bash tools/e2e.sh",
     "audit:prod": "npm audit --omit=dev",
-    "ci": "npm run audit:prod && npm run lint && npm run typecheck:tests && npm run test:coverage && npm run build && npm run test:consumer"
+    "ci": "npm audit && npm run audit:prod && npm run lint && npm run typecheck:tests && npm run test:coverage && npm run build && npm run test:consumer"
   },
   "dependencies": {
     "ssh2": "^1.16.0"
@@ -33,9 +33,9 @@
   "devDependencies": {
     "@types/node": "^26.6.3",
     "@types/ssh2": "^1.15.6",
-    "@vitest/coverage-v8": "^5.0.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "fast-check": "^4.10.2",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.5"
   }
 }
