@@ -248,10 +248,13 @@ the whole line.
 
 ## Live smoke (opt-in)
 
-A manual smoke against a real host. Requires a built `dist/` and pinned
-credentials; it refuses to run without `SSH_HOST_FINGERPRINT` unless
-`SSH_INSECURE_SKIP_VERIFY=true`. It is **not** part of `npm test` or CI.
-Unit tests use fakes. Docker E2E is opt-in via `npm run test:e2e`.
+A manual smoke against a real host. Requires a built `dist/`, credentials, and
+`SSH_HOST_FINGERPRINT`. It always verifies the pinned key and does not support
+`SSH_INSECURE_SKIP_VERIFY`. It runs the DrayOS read command `sys version`, then
+prints only the UTF-8 stdout byte count and command/connect durations. On
+failure it prints only an error code; router output and connection details are
+never printed. The live connection is **not** part of CI; its automated tests
+use a fake client. Docker E2E is opt-in via `npm run test:e2e`.
 
 ```bash
 npm run build
@@ -259,8 +262,8 @@ set -a; . ./.env; set +a
 node tools/live-smoke.mjs
 ```
 
-On success it prints the `exec` result JSON; on failure it prints the
-`SshClientError` code and exits non-zero.
+On success it prints sanitized metrics; on failure it prints the `SshClientError`
+code (or `unexpected`) and exits non-zero.
 
 ## Docker Ubuntu E2E
 
