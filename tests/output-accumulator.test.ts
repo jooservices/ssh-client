@@ -95,6 +95,14 @@ describe('OutputAccumulator', () => {
     expect(accumulator.snapshot().includes('\u001b')).toBe(false);
   });
 
+  it('rejects an invalid ANSI parser state instead of returning it as output', () => {
+    const accumulator = new OutputAccumulator();
+    const internal = accumulator as unknown as { ansi: { state: string } };
+    internal.ansi = { state: 'unexpected' };
+
+    expect(() => accumulator.push(Buffer.from('data'))).toThrow('Unexpected ANSI parser state: unexpected');
+  });
+
   it('20k over 10k ratio', () => {
     const ratio = medianRatio();
 
@@ -173,6 +181,10 @@ describe('cleanOutput', () => {
     expect(cleanOutput(`show\rvalue\n${prompt}`, 'show', prompt)).toBe('value');
     expect(cleanOutput('x', 'xyz', '')).toBe('x');
     expect(cleanOutput('left\r', '', '')).toBe('left');
+  });
+
+  it('keeps a trailing space when a wrapped echo does not match', () => {
+    expect(cleanOutput('show ', 'showversion', '')).toBe('show ');
   });
 });
 

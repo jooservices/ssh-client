@@ -16,6 +16,12 @@ const active: AttemptSnapshot = {
 };
 
 describe('decideAttempt', () => {
+  it('rejects an unknown runtime event at the exhaustive fallback', () => {
+    const event = { type: 'future-event' } as never;
+
+    expect(() => decideAttempt(live, event)).toThrow('Unexpected transport event: future-event');
+  });
+
   it('plans ready, shell, and transport events', () => {
     const timeout = 'ready prompt timed out after 1000ms';
     const cases: Array<{ snapshot: AttemptSnapshot; event: TransportEvent; effect: string }> = [
@@ -149,6 +155,7 @@ describe('classifyConnectError', () => {
     expect(classifyConnectError({ level: 'client-socket', message: 'reset' })).toBe('connect');
     expect(classifyConnectError({ level: 'handshake', message: 'Host denied (verification failed)' })).toBe('connect');
     expect(classifyConnectError({ level: 'protocol', message: 'bad' })).toBe('connect');
+    expect(classifyConnectError({ level: 42, message: 'bad' })).toBe('connect');
     expect(classifyConnectError({ level: 'handshake', message: 'Host denied (verification failed)' }, true)).toBe('hostkey');
     expect(classifyConnectError('Host key verification failed', true)).toBe('hostkey');
   });

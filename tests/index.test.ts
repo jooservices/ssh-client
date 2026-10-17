@@ -3,6 +3,15 @@ import { SshClient, SshClientError, fingerprintSha256 } from '../src/index.js';
 import type { ExecOptions, ExecResult, SshClientOptions, SshErrorCode } from '../src/index.js';
 
 describe('public barrel', () => {
+  it('loads all runtime re-exports through the public entry point', async () => {
+    const api = await import('../src/index.js');
+
+    expect(Object.keys(api).sort()).toEqual(['SshClient', 'SshClientError', 'fingerprintSha256']);
+    expect(api.SshClient).toBe(SshClient);
+    expect(api.SshClientError).toBe(SshClientError);
+    expect(api.fingerprintSha256).toBe(fingerprintSha256);
+  });
+
   it('exposes the stable constructors and helper functions', () => {
     expect(SshClient).toBeTypeOf('function');
     expect(new SshClientError('invalid', 'bad input')).toBeInstanceOf(Error);

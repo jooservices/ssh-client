@@ -6,12 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 describe('per-file coverage gate', () => {
-  it('per-file floor', () => {
+  it('requires every executable source metric to reach 100 percent', () => {
     const low = writeSummary({
-      '/repo/src/low.ts': bucket(80),
+      '/repo/src/low.ts': bucket(99),
     });
     const high = writeSummary({
-      '/repo/src/high.ts': bucket(90),
+      '/repo/src/high.ts': bucket(100),
+      '/repo/src/types.ts': emptyBucket(),
       '/repo/tests/ignored.test.ts': bucket(10),
     });
 
@@ -23,6 +24,15 @@ describe('per-file coverage gate', () => {
     expect(passed.status).toBe(0);
   });
 });
+
+function emptyBucket(): Record<string, { pct: number; total: number }> {
+  return {
+    statements: { pct: 0, total: 0 },
+    branches: { pct: 0, total: 0 },
+    functions: { pct: 0, total: 0 },
+    lines: { pct: 0, total: 0 },
+  };
+}
 
 function bucket(pct: number): Record<string, { pct: number; total: number }> {
   return {

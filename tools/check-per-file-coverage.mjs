@@ -7,7 +7,7 @@ const KEYS = ['statements', 'branches', 'functions', 'lines'];
  * @param {number} floor
  * @returns {string[]}
  */
-export function evaluatePerFileCoverage(summary, floor = 85) {
+export function evaluatePerFileCoverage(summary, floor = 100) {
   const failures = [];
 
   for (const [file, metrics] of Object.entries(summary)) {
