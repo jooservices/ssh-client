@@ -1,68 +1,85 @@
 #!/usr/bin/env node
-// Opt-in live smoke against a real SSH host. Not referenced by any test suite.
-//
-// Usage:
-//   npm run build
-//   set -a; . ./.env; set +a
-//   node tools/live-smoke.mjs
-//
-// Reads SSH_HOST, SSH_PORT, SSH_USER, SSH_PASSWORD, SSH_HOST_FINGERPRINT,
-// SSH_INSECURE_SKIP_VERIFY from the environment (see .env.example). Refuses to
-// connect without a pinned SSH_HOST_FINGERPRINT unless SSH_INSECURE_SKIP_VERIFY
-// is "true" (test hosts only). Prints { stdout, durationMs } on success; on
-// failure prints the SshClientError code and exits non-zero.
+// Opt-in live smoke against a real SSH host. Not referenced by any live test.
+// It always verifies a pinned key and only reports output size and timings.
 
-const { SSH_HOST, SSH_PORT, SSH_USER, SSH_PASSWORD, SSH_HOST_FINGERPRINT, SSH_INSECURE_SKIP_VERIFY } =
-  process.env;
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const insecureSkipVerify = SSH_INSECURE_SKIP_VERIFY === 'true';
+export const READ_COMMAND = 'sys version';
 
-if (!SSH_HOST || !SSH_USER || !SSH_PASSWORD) {
-  console.error('live smoke requires SSH_HOST, SSH_USER, and SSH_PASSWORD (see .env.example)');
-  process.exit(1);
-}
-
-if (!SSH_HOST_FINGERPRINT && !insecureSkipVerify) {
-  console.error(
-    'refusing to connect without SSH_HOST_FINGERPRINT; ' +
-      'pin the host key or set SSH_INSECURE_SKIP_VERIFY=true for test hosts only',
-  );
-  process.exit(1);
-}
-
-let SshClient;
-let SshClientError;
-
-try {
-  ({ SshClient, SshClientError } = await import('../dist/index.js'));
-} catch {
-  console.error('cannot load the built package — run `npm run build` first');
-  process.exit(1);
-}
-
-let client = null;
-
-try {
-  client = new SshClient({
-    host: SSH_HOST,
-    port: SSH_PORT ? Number(SSH_PORT) : undefined,
-    username: SSH_USER,
-    password: SSH_PASSWORD,
-    hostFingerprint: SSH_HOST_FINGERPRINT,
-    insecureSkipVerify,
-  });
-
-  await client.connect();
-  const result = await client.exec('echo ssh-client-live-smoke-ok');
-  console.log(JSON.stringify(result, null, 2));
-} catch (err) {
-  if (err instanceof SshClientError) {
-    console.error(`live smoke failed: code=${err.code} message=${err.message}`);
-  } else {
-    console.error('live smoke failed with unexpected error:', err);
+export async function runLiveSmoke({
+  env = process.env,
+  loadClient = () => import('../dist/index.js'),
+  log = (message) => console.log(message),
+  logError = (message) => console.error(message),
+} = {}) {
+  if (!env.SSH_HOST || !env.SSH_USER || !env.SSH_PASSWORD) {
+    logError('live smoke requires SSH_HOST, SSH_USER, and SSH_PASSWORD (see .env.example)');
+    return 1;
   }
 
-  process.exitCode = 1;
-} finally {
-  await client?.disconnect();
+  if (!env.SSH_HOST_FINGERPRINT) {
+    logError('refusing to connect without SSH_HOST_FINGERPRINT');
+    return 1;
+  }
+
+  let SshClient;
+  let SshClientError;
+  try {
+    ({ SshClient, SshClientError } = await loadClient());
+  } catch {
+    logError('cannot load the built package — run `npm run build` first');
+    return 1;
+  }
+
+  let client;
+  let result;
+  let errorCode;
+
+  try {
+    client = new SshClient({
+      host: env.SSH_HOST,
+      port: env.SSH_PORT ? Number(env.SSH_PORT) : undefined,
+      username: env.SSH_USER,
+      password: env.SSH_PASSWORD,
+      hostFingerprint: env.SSH_HOST_FINGERPRINT,
+    });
+
+    await client.connect();
+    result = await client.exec(READ_COMMAND);
+  } catch (error) {
+    errorCode =
+      typeof SshClientError === 'function' && error instanceof SshClientError
+        ? error.code
+        : 'unexpected';
+  }
+
+  try {
+    await client?.disconnect();
+  } catch (error) {
+    if (!errorCode) {
+      errorCode =
+        typeof SshClientError === 'function' && error instanceof SshClientError
+          ? error.code
+          : 'unexpected';
+    }
+  }
+
+  if (errorCode) {
+    logError(JSON.stringify({ errorCode }));
+    return 1;
+  }
+
+  log(
+    JSON.stringify({
+      stdoutBytes: Buffer.byteLength(result.stdout, 'utf8'),
+      durationMs: result.durationMs,
+      connectMs: result.connectMs,
+    }),
+  );
+  return 0;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  process.exitCode = await runLiveSmoke();
 }
